@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知识库终端</title>
+<link rel="stylesheet" href="assets/github-markdown.css">
+<link rel="stylesheet" href="assets/highlight-github-dark.min.css">
+<style>
+  :root { --bg:#fff; --fg:#1f2328; --muted:#656d76; --border:#d0d7de; --accent:#0969da; --warn:#cf222e; --good:#1a7f37; --gray:#825500; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; background:#f6f8fa; color:var(--fg); font-size:14px; }
+  header { background:#fff; border-bottom:1px solid var(--border); padding:10px 14px; position:sticky; top:0; z-index:10; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; max-width:1400px; margin:0 auto; }
+  h1 { font-size:16px; margin:0 12px 0 0; white-space:nowrap; }
+  input[type=text] { flex:1; min-width:200px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; }
+  select, button { padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:#fff; cursor:pointer; font-size:13px; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:hover { background:#f3f4f6; }
+  button.primary:hover { background:#0860ca; }
+  button.danger { color:var(--warn); }
+  .status { max-width:1400px; margin:6px auto; padding:0 14px; color:var(--muted); font-size:12px; }
+  .main { max-width:1400px; margin:0 auto; padding:10px 14px; display:grid; grid-template-columns:1fr 1.3fr; gap:14px; }
+  @media (max-width:900px){ .main{ grid-template-columns:1fr; } }
+  .col { background:#fff; border:1px solid var(--border); border-radius:8px; padding:10px; min-height:200px; }
+  .col h2 { font-size:13px; margin:0 0 8px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+  .hit { border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-bottom:8px; cursor:pointer; }
+  .hit:hover { border-color:var(--accent); background:#f6fbff; }
+  .hit .ttl { font-weight:600; }
+  .hit .meta { color:var(--muted); font-size:12px; margin:2px 0; }
+  .hit .snip { color:#57606a; font-size:12px; }
+  .tag { display:inline-block; padding:1px 6px; border-radius:10px; font-size:11px; margin-right:4px; }
+  .tag.对话{background:#ddf4ff;color:#0969da;} .tag.周报{background:#dafbe1;color:#1a7f37;}
+  .tag.成果{background:#fff8c5;color:#9a6700;} .tag.灰库{background:#f6f8fa;color:#656d76;border:1px solid var(--border);}
+  .badge{color:var(--warn);font-weight:600;margin-left:4px;}
+  .badge.good{color:var(--good);}
+  .actions { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; padding:8px; background:#f6f8fa; border-radius:6px; }
+  .actions .lbl { color:var(--muted); font-size:12px; align-self:center; margin-right:4px;}
+  .mdhost { padding:8px; }
+  .issue { border-left:3px solid var(--warn); background:#fff8c5; padding:6px 8px; margin:6px 0; font-size:13px; }
+  .issue .when{color:var(--muted);font-size:11px;}
+  .empty { color:var(--muted); text-align:center; padding:30px; }
+  .twostep { background:var(--warn); color:#fff; }
+  .gray-list .item{display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--border);padding:6px 8px;border-radius:6px;margin-bottom:6px;cursor:pointer;}
+  .gray-list .item:hover{border-color:var(--accent);background:#f6fbff;}
+  .gray-list .item > span{flex:1;min-width:0;}
+  details summary{cursor:pointer;color:var(--accent);}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>📚 知识库终端</h1>
+    <input type="text" id="q" placeholder="多词空格分隔（如：PT100 校准）" onkeydown="if(event.key==='Enter')doSearch()">
+    <select id="domain">
+      <option value="all">全部域</option>
+      <option value="对话">对话</option>
+      <option value="周报">周报</option>
+      <option value="成果">成果</option>
+    </select>
+    <select id="time" onchange="onTimeChange()">
+      <option value="all">全部时间</option>
+      <option value="1">今天</option>
+      <option value="7">近7天</option>
+      <option value="30">近30天</option>
+      <option value="365">今年</option>
+      <option value="custom">自定义</option>
+    </select>
+    <span id="dates" style="display:none">
+      <input type="date" id="since_date"> ~ <input type="date" id="until_date">
+    </span>
+    <input type="text" id="notq" placeholder="排除" style="width:70px" onkeydown="if(event.key==='Enter')doSearch()">
+    <button class="primary" onclick="doSearch()">搜索</button>
+    <button onclick="showGray()">灰库</button>
+    <button onclick="allIssues()">全部issue</button>
+  </div>
+</header>
+<div class="status" id="status">加载中…</div>
+<div class="main">
+  <div class="col" id="left">
+    <h2>命中结果</h2>
+    <div id="results"><div class="empty">输入关键词搜索（建议多词联想）</div></div>
+  </div>
+  <div class="col" id="right">
+    <h2>详情（GitHub 风渲染）</h2>
+    <div id="detail"><div class="empty">点击左侧"展开"查看内容</div></div>
+  </div>
+</div>
+
+<!-- MathJax 配置必须在 mathjax.js 之前 -->
+<script>window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']]},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']}};</script>
+<script src="assets/marked.min.js"></script>
+<script src="assets/highlight.min.js"></script>
+<script src="assets/mermaid.min.js"></script>
+<script>if(window.mermaid){mermaid.initialize({startOnLoad:false, theme:'default', securityLevel:'loose'});}</script>
+<script src="assets/mathjax-tex-mml-chtml.js"></script>
+
+<script>
+let cur = null; // 当前展示单元 {domain, unit_id, title}
+let DOMAIN_LABELS = {};
+function domainLabel(d){
+  if(d==='gray' || d==='gray-doc') return '灰库';
+  if(d==='conversation') return '对话';
+  if(d==='weekly') return '周报';
+  if(d && d.startsWith('project:')) return DOMAIN_LABELS[d] || ('成果·'+d.slice(8));
+  return DOMAIN_LABELS[d] || d;
+}
+function fmtTs(ts){ if(!ts) return ''; const d=new Date(ts); return isNaN(d)?'':d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function esc(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function badgeHtml(b){ if(!b) return ''; let s=''; if(b.score>=1) s+='<span class="badge good">★有用'+Math.round(b.score)+'</span>'; else if(b.score<0) s+='<span class="badge">↓负评</span>'; if(b.errata_open>0) s+='<span class="badge">⚠勘误'+b.errata_open+'</span>'; return s; }
+function renderMd(mdText, el){
+  el.innerHTML = marked.parse(mdText||'(空)');
+  // mermaid: 把 ```mermaid 代码块转成 <div class=mermaid>
+  el.querySelectorAll('code.language-mermaid').forEach(function(c){
+    const pre=c.parentNode; const d=document.createElement('div'); d.className='mermaid'; d.textContent=c.textContent; pre.replaceWith(d);
+  });
+  if(window.mermaid){ try{ mermaid.run({nodes:el.querySelectorAll('.mermaid')}); }catch(e){} }
+  el.querySelectorAll('pre code').forEach(function(c){ if(!c.classList.contains('language-mermaid') && window.hljs){ try{hljs.highlightElement(c);}catch(e){} } });
+  if(window.MathJax && MathJax.typesetPromise){ MathJax.typesetPromise([el]); }
+}
+async function api(path, opts){ const r=await fetch(path, opts||{}); return r.json(); }
+function post(path, data){ return api(path, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}); }
+
+async function loadStatus(){
+  const s=await api('/api/status');
+  s.domains.forEach(d=>DOMAIN_LABELS[d.key]=d.label);
+  let html = s.domains.map(d=>`<span class="tag ${labelClass(d.label)}">${d.label}</span>${d.available?'✓'+(d.indexed??'?')+'段':'✗离线'}`).join(' · ');
+  html += ` · 总 ${s.size.total_mb} MB`;
+  if(s.size.total_mb>=256) html += ' <span style="color:#cf222e">⚠ 超警报阈值</span>';
+  document.getElementById('status').innerHTML = html;
+}
+function labelClass(lab){ if(lab.startsWith('对话'))return '对话'; if(lab.startsWith('周报'))return '周报'; if(lab.startsWith('成果'))return '成果'; return '灰库'; }
+
+function onTimeChange(){
+  const t=document.getElementById('time').value;
+  document.getElementById('dates').style.display = (t==='custom') ? '' : 'none';
+}
+function timeRange(){
+  // 返回 {since, until} 毫秒；无过滤则均为 null
+  const t=document.getElementById('time').value;
+  if(t==='all') return {since:null, until:null};
+  if(t==='custom'){
+    const s=document.getElementById('since_date').value;
+    const u=document.getElementById('until_date').value;
+    return {since: s ? new Date(s).getTime() : null,
+            until: u ? new Date(u).getTime()+86400000-1 : null}; // 含当日
+  }
+  const days=parseInt(t);
+  return {since: Date.now()-days*86400000, until:null};
+}
+
+async function doSearch(){
+  const q=document.getElementById('q').value.trim();
+  const dom=document.getElementById('domain').value;
+  const tr=timeRange();
+  let url='/api/search?q='+encodeURIComponent(q)+'&domain='+encodeURIComponent(dom);
+  if(tr.since!=null) url+='&since='+tr.since;
+  if(tr.until!=null) url+='&until='+tr.until;
+  const notq=document.getElementById('notq').value.trim();
+  if(notq) url+='&not='+encodeURIComponent(notq);
+  document.getElementById('results').innerHTML='<div class="empty">搜索中…</div>';
+  const d=await api(url);
+  let html='';
+  const all=(d.hits||[]).map(h=>({h,gray:false})).concat((d.gray_hits||[]).map(h=>({h,gray:true})));
+  if(!all.length){ html='<div class="empty">未命中'+(d.offline&&d.offline.length?'（'+d.offline.join(',')+'离线已跳过）':'')+'</div>'; }
+  else{
+    if(d.used_gray_fallback) html+='<div style="color:#825500;font-size:12px;margin-bottom:6px">⚠ active 域全空，已回退查灰库</div>';
+    all.forEach(({h,gray})=>{
+      html+=`<div class="hit" onclick="expand('${h.ref_id}',${gray})">
+        <div class="ttl">${badgeHtml(h.badge)}<span class="tag ${labelClass(h.domain_label)}">${h.domain_label}</span> ${esc(h.title)}</div>
+        <div class="meta">${esc(h.sub)} · 共识 ${h.matched}</div>
+        <div class="snip">${esc(h.snippet)}</div>
+      </div>`;
+    });
+  }
+  document.getElementById('results').innerHTML=html;
+}
+
+async function expand(id, isGray){
+  document.getElementById('detail').innerHTML='<div class="empty">加载…</div>';
+  const d=await api('/api/expand?id='+encodeURIComponent(id));
+  if(d.err){ document.getElementById('detail').innerHTML='<div class="empty">'+esc(d.err)+'</div>'; return; }
+  cur={domain:d.domain, unit_id:d.unit_id, title:d.title, ref_id:id, isGray:!!(d.isGray||isGray)};
+  showDetail(d);
+}
+async function whole(id, kind){
+  document.getElementById('detail').innerHTML='<div class="empty">加载…</div>';
+  const d=await api('/api/whole?id='+encodeURIComponent(id)+'&kind='+kind);
+  if(d.err){ document.getElementById('detail').innerHTML='<div class="empty">'+esc(d.err)+'</div>'; return; }
+  cur={domain:d.domain, unit_id:d.unit_id, title:d.title, ref_id:(cur&&cur.ref_id)||id, isGray:!!d.isGray};
+  showDetail(d, true);
+}
+function showDetail(d, isWhole){
+  let html=`<div class="actions"><span class="lbl">${esc(d.title)} · ${domainLabel(d.domain)}${cur&&cur.isGray?' · <span style="color:#825500">灰库中</span>':''}</span></div>`;
+  html+=`<div class="actions">
+    <button onclick="rate('useful')">👍 有用</button>
+    <button onclick="rate('stale')">👎 过时</button>
+    <button onclick="rate('wrong')">👎 错误</button>
+    <button onclick="addIssue()">＋ 挂 issue</button>
+    <button onclick="viewIssues()">看 issue</button>
+    ${isWhole?'':'<button onclick="whole(\''+cur.unit_id+'\',\''+(cur.domain==='conversation'?'session':'document')+'\')">看全文</button>'}
+    ${cur&&cur.isGray?'<button class="danger" onclick="reviveFromDetail()">恢复到 active</button>':(cur&&cur.domain&&cur.domain.startsWith('project:')?'<button class="danger" onclick="evict()">移入灰库</button>':'')}
+  </div>`;
+  // multimodal_url 链接（周报 v4 kimi 回填）
+  if(d.multimodal_url){
+    html+=`<div class="actions"><a href="${esc(d.multimodal_url)}" target="_blank" rel="noopener" style="color:#0969da;font-weight:600;text-decoration:none">🌐 多模态展示（kimi）↗</a></div>`;
+  }
+  // errata 告诫
+  if(d.badge && d.badge.errata && d.badge.errata.length){
+    html+='<div style="margin:6px 0">';
+    d.badge.errata.forEach(e=>{ html+=`<div class="issue">⚠ 勘误：${esc(e.note)} <span class="when">${fmtTs(e.ts)}</span></div>`; });
+    html+='</div>';
+  }
+  html+=`<div class="mdhost markdown-body" id="mdhost"></div>`;
+  document.getElementById('detail').innerHTML=html;
+  renderMd(d.md, document.getElementById('mdhost'));
+}
+
+async function rate(verdict){
+  if(!cur){return;}
+  const r=await post('/api/rate',{domain:cur.domain,unit_id:cur.unit_id,verdict});
+  if(r.ok){ alert('已记录：'+verdict+' (rank='+r.rank.score+')'); loadStatus(); }
+  else alert('失败：'+(r.err||''));
+}
+async function addIssue(){
+  if(!cur){return;}
+  const note=prompt('issue 内容（这条文档哪里需要修正/补充？将挂在原位置，不改原文）：');
+  if(!note||!note.trim()){return;}
+  const r=await post('/api/issue',{domain:cur.domain,unit_id:cur.unit_id,note:note.trim()});
+  if(r.ok){ alert('issue 已挂（id='+r.issue.id+'）。原文未改动。'); viewIssues(); loadStatus(); }
+}
+async function viewIssues(){
+  if(!cur){return;}
+  const d=await api('/api/issues?domain='+encodeURIComponent(cur.domain)+'&unit_id='+encodeURIComponent(cur.unit_id));
+  let html=`<div class="actions"><span class="lbl">issues of ${esc(cur.title)}</span><button onclick="expand('${cur.ref_id||cur.unit_id}')">返回内容</button></div>`;
+  if(!d.issues||!d.issues.length){ html+='<div class="empty">无 issue</div>'; }
+  else{ d.issues.forEach(i=>{
+    html+=`<div class="issue">[${i.status}] ${esc(i.note)}<br><span class="when">${fmtTs(i.opened_ts)}${i.status==='resolved'?' · 已关闭 '+fmtTs(i.resolved_ts):' · <a href="#" onclick="closeIssue(${i.id});return false;">关闭</a>'}</span></div>`;
+  }); }
+  document.getElementById('detail').innerHTML=html;
+}
+async function closeIssue(id){
+  const r=await post('/api/issue_close',{id});
+  if(r.ok){ alert('已关闭'); viewIssues(); loadStatus(); }
+}
+
+// 两步确认（按按钮自身 dataset.armed 记状态，避免函数对象 === 失效）
+function twoStep(label, fn){
+  const btn=event.target;
+  if(btn.dataset.armed){ delete btn.dataset.armed; btn.classList.remove('twostep'); clearTimeout(window._tsTimer); fn(); return; }
+  btn.dataset.armed='1'; btn.textContent='再点确认'+label; btn.classList.add('twostep');
+  clearTimeout(window._tsTimer); window._tsTimer=setTimeout(()=>{delete btn.dataset.armed; btn.textContent=label; btn.classList.remove('twostep');},3500);
+}
+async function evict(){
+  if(!cur){return;}
+  twoStep('移入灰库', async()=>{
+    const r=await post('/api/evict',{domain:cur.domain,unit_id:cur.unit_id});
+    alert(r.ok?'已移入灰库（可从灰库恢复）':('失败：'+r.err));
+    if(r.ok){ doSearch(); }
+  });
+}
+async function reviveFromDetail(){
+  if(!cur){return;}
+  twoStep('恢复到active', async()=>{
+    const r=await post('/api/revive',{domain:cur.domain,unit_id:cur.unit_id});
+    alert(r.ok?'已恢复到 active':('失败：'+r.err));
+    if(r.ok){ cur.isGray=false; doSearch(); whole(cur.unit_id,'document'); }
+  });
+}
+
+async function showGray(){
+  const d=await api('/api/gray');
+  let html='<h2>灰库（失效归档，点卡片查看原文）</h2>';
+  if(!d.docs||!d.docs.length){ html+='<div class="empty">灰库为空</div>'; }
+  else{ html+='<div class="gray-list">'; d.docs.forEach(doc=>{
+    html+=`<div class="item" onclick="whole('${doc.doc_id}','document')"><span><span class="tag ${labelClass(doc.domain)}">${domainLabel(doc.domain)}</span> ${esc(doc.title||doc.doc_id)}</span><button onclick="event.stopPropagation();revive('${doc.domain}','${doc.doc_id}',this)">恢复</button></div>`;
+  }); html+='</div>'; }
+  document.getElementById('results').innerHTML=html;
+  document.getElementById('detail').innerHTML='<div class="empty">点左侧灰库卡片查看原文；点"恢复"提回 active。</div>';
+}
+async function revive(domain, docId, btn){
+  twoStepBtn(btn,'恢复',async()=>{
+    const r=await post('/api/revive',{domain,unit_id:docId});
+    alert(r.ok?'已恢复到 active':('失败：'+r.err));
+    if(r.ok) showGray();
+  });
+}
+function twoStepBtn(btn,label,fn){
+  if(btn.dataset.armed){ delete btn.dataset.armed; fn(); return; }
+  btn.dataset.armed='1'; const orig=btn.textContent; btn.textContent='再点确认'+label; btn.classList.add('twostep');
+  setTimeout(()=>{ delete btn.dataset.armed; btn.textContent=orig; btn.classList.remove('twostep'); },3500);
+}
+
+async function allIssues(){
+  const d=await api('/api/issues?status=open');
+  let html='<h2>全部未结 issue（点卡片进原文）</h2>';
+  if(!d.issues||!d.issues.length){ html+='<div class="empty">无未结 issue</div>'; }
+  else{ d.issues.forEach(i=>{
+    html+=`<div class="issue" style="cursor:pointer" onclick="openSource('${i.domain}','${i.unit_id}')">[${domainLabel(i.domain)}] ${esc(i.note)}<br><span class="when">${fmtTs(i.opened_ts)} · <a href="#" onclick="event.stopPropagation();closeIssue(${i.id});allIssues();return false;">关闭</a></span></div>`;
+  }); }
+  document.getElementById('results').innerHTML=html;
+}
+function openSource(domain, unitId){
+  // 点 issue 卡片 → 在详情面板打开原文（对话=整会话，文档=整文档）
+  whole(unitId, domain==='conversation' ? 'session' : 'document');
+}
+
+loadStatus();
+</script>
+</body>
+</html>

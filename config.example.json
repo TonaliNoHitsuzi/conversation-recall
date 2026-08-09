@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "_comment": "三域分布式知识体系配置。复制本文件为 config.json 后按本机环境修改。db_path 相对路径以本文件所在目录(conversation-recall/)为根；绝对路径(如 E:/...)也支持。conversation 域默认开启(只需 opencode 历史)；weekly/projects/gray/meta 按需启用。",
+
+  "domains": {
+    "conversation": {
+      "kind": "conversation",
+      "db_path": "index/recall.db",
+      "enabled": true,
+      "_comment_opencode_db": "对话域从 opencode 自带的 session db 抽取，路径由脚本自动探测；如需覆盖，加 \"opencode_db_path\": \"...\""
+    },
+
+    "weekly": {
+      "kind": "doc",
+      "label": "周报",
+      "db_path": "data/weekly.db",
+      "source_root": "E:/周报",
+      "source_glob": "**/*.md",
+      "index_globs": [
+        "周报*.md",
+        "周报摘要*.md",
+        "weekly-report*.md",
+        "leader-summary*.md",
+        "修改记录*.md",
+        "**/产出/文档/*.md",
+        "**/计划/*.md"
+      ],
+      "store_only_globs": [
+        "素材*.md"
+      ],
+      "enabled": false,
+      "_comment_enable": "改为 true 启用；把 source_root 指向你的周报目录"
+    }
+  },
+
+  "projects": [
+    {
+      "_comment_template": "成果域样例。复制本块改 slug/source_root 后加入数组。db_path 建议放 data/projects/<slug>.db。",
+      "slug": "my-project",
+      "label": "我的项目",
+      "db_path": "data/projects/my-project.db",
+      "source_root": "D:/path/to/your/project/docs",
+      "source_glob": "**/*.md",
+      "index_globs": ["**/*.md"],
+      "store_only_globs": [],
+      "exclude_globs": ["INDEX.md", "_template.md"],
+      "enabled": false
+    }
+  ],
+
+  "gray": {
+    "db_path": "data/gray.db",
+    "enabled": false,
+    "_comment": "灰库（失效归档）。审计淘汰的成果域 section 移入此处；active 全空时兜底检索"
+  },
+
+  "meta": {
+    "db_path": "data/meta.db",
+    "_comment": "rank/反馈/勘误/审计日志。即使 gray 关闭也建议保留 meta"
+  },
+
+  "thresholds": {
+    "size_warn_mb": 256,
+    "size_target_mb": 216,
+    "_comment": "size 警报阈值。某成果域 db 超过 warn 时检索结果附带 ⚠ 警告，提示审计"
+  }
+}

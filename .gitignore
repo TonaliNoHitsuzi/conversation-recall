@@ -1,0 +1,25 @@
+# ── 数据库（派生产物，可从源 md 重建）──
+*.db
+*.db-wal
+*.db-shm
+index/
+
+# ── 用户配置（含本机绝对路径，每人不同）──
+config.json
+
+# ── Python 缓存 ──
+__pycache__/
+*.pyc
+
+# ── 运行日志 / 审计 ──
+web/logs/
+*.log
+*.jsonl
+
+# ── 开发自检表单（过程文档，不随发布）──
+dev_log/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+desktop.ini
