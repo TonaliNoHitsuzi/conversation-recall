@@ -1759,7 +1759,7 @@ function openNewLibrary(){
   '<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal" role="dialog">'+
     '<h3>新建库</h3>'+
     '<p class="modal-sub">新建一个知识库域（<code>project:&lt;slug&gt;</code>）。后端会自动写配置、初始化索引并做首次同步。</p>'+
-    '<div class="fld-row"><label>slug <span class="fld-sub">英文短名，必填（/^[a-z][a-z0-9_]*$/）</span></label><input type="text" id="nlSlug" placeholder="如 searchlight"></div>'+
+    '<div class="fld-row"><label>slug <span class="fld-sub">英文短名，必填（小写字母开头，只能含小写字母/数字/下划线，如 my_notes）</span></label><input type="text" id="nlSlug" placeholder="如 searchlight"></div>'+
     '<div class="fld-row"><label>显示名 <span class="fld-sub">必填</span></label><input type="text" id="nlLabel" placeholder="如 探照灯认知"></div>'+
     '<div class="fld-row"><label>介绍</label><textarea id="nlDesc" placeholder="这个库装什么？"></textarea></div>'+
     '<div class="fld-row"><label>标签 <span class="fld-sub">回车添加</span></label><div class="tagbox" id="nlTagBox" onclick="this.querySelector(\'input\').focus()"><input type="text" placeholder="学习 / 工作 …"></div></div>'+
