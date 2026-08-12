@@ -887,7 +887,10 @@ function renderMd(mdText, el){
     d.textContent = c.textContent;
     pre.replaceWith(d);
   });
-  if(window.mermaid){ try{ mermaid.run({nodes: el.querySelectorAll('.mermaid')}); }catch(e){} }
+  /* mermaid.run 是 async（v11）：发起渲染 → 同步加 pre 类 + hljs → addBlockTools（pre 的按钮此时安全）
+     → 等 mermaid 完成后再次 addBlockTools（mermaid 会用 SVG 覆盖 div 内 innerHTML，把按钮一并清掉，所以必须补加一次） */
+  let mPromise = null;
+  if(window.mermaid){ try{ mPromise = mermaid.run({nodes: el.querySelectorAll('.mermaid')}); }catch(e){} }
   /* hljs + 代码工具条 */
   el.querySelectorAll('pre').forEach(function(pre){
     const code = pre.querySelector('code');
@@ -897,6 +900,9 @@ function renderMd(mdText, el){
     if(window.hljs){ try{ hljs.highlightElement(code); }catch(e){} }
   });
   addBlockTools(el);
+  if(mPromise && typeof mPromise.then === 'function'){
+    mPromise.then(function(){ addBlockTools(el); }).catch(function(){});
+  }
   if(window.MathJax && MathJax.typesetPromise){ try{ MathJax.typesetPromise([el]); }catch(e){} }
 }
 function wrapImg(im, rawUrl){
@@ -992,7 +998,17 @@ function rerenderMermaid(){
   const nodes = document.querySelectorAll('.mermaid[data-mmd]');
   if(!nodes.length) return;
   nodes.forEach(d => { d.removeAttribute('data-processed'); d.textContent = d.dataset.mmd; });
-  try{ mermaid.run({nodes}); }catch(e){}
+  try{
+    const p = mermaid.run({nodes});
+    /* 切主题后 mermaid 重渲染同样会清掉按钮 → 重加 */
+    if(p && typeof p.then === 'function'){
+      p.then(function(){ 
+        nodes.forEach(n => {
+          if(n.parentElement) addBlockTools(n.parentElement);
+        });
+      }).catch(function(){});
+    }
+  }catch(e){}
 }
 </script>
 <script>
@@ -1309,8 +1325,8 @@ async function expand(id, isGray, hit){
     const d = await api('/api/expand?id=' + encodeURIComponent(id));
     if(d.err){ $('#detail').innerHTML = '<div class="empty">'+esc(d.err)+'</div>'; return; }
     cur = {domain:d.domain, unit_id:d.unit_id, title:d.title, ref_id:id,
-           isGray:!!(d.isGray||isGray), genre:d.genre||(hit&&hit.genre)||'', file_path:null};
-    if(hit && hit.sub) cur.file_path = parseFilePath(hit.sub);
+           isGray:!!(d.isGray||isGray), genre:d.genre||(hit&&hit.genre)||'',
+           file_path:d.file_path || (hit && parseFilePath(hit.sub)) || null};
     showDetail(d, false);
     loadSiblings(d.unit_id);
   }catch(e){ $('#detail').innerHTML = emptyHtml('err','加载失败','无法连接 /api/expand。'); $('#detailMeta').textContent=''; }
@@ -1322,7 +1338,8 @@ async function whole(id, kind){
     const d = await api('/api/whole?id=' + encodeURIComponent(id) + '&kind=' + kind);
     if(d.err){ $('#detail').innerHTML = '<div class="empty">'+esc(d.err)+'</div>'; return; }
     cur = {domain:d.domain, unit_id:d.unit_id, title:d.title, ref_id:(cur&&cur.ref_id)||id,
-           isGray:!!d.isGray, genre:d.genre||'', file_path:null};
+           isGray:!!d.isGray, genre:d.genre||'',
+           file_path:d.file_path || (cur && cur.file_path) || null};
     showDetail(d, true);
     loadSiblings(d.unit_id);
   }catch(e){ $('#detail').innerHTML = emptyHtml('err','加载失败','无法连接 /api/whole。'); $('#detailMeta').textContent=''; }
@@ -1336,7 +1353,24 @@ function parseFilePath(sub){
 
 function rawUrlOf(domain, path, download){
   let p = path;
-  try{ p = decodeURIComponent(path); }catch(e){}   // marked 已编码过 src，先还原再统一编码
+  try{ p = decodeURIComponent(path); }catch(e){}
+  /* v3 fix: 相对路径（./ 或 ../ 或裸文件名）按当前 doc 的 file_path 解析。
+     marked 给的 src 是相对 md 文件所在目录的，必须 join 后才能命中 source_root 子树。 */
+  if(p && !/^https?:\/\//i.test(p) && !p.startsWith('data:') && (p.startsWith('./') || p.startsWith('../') || (p.indexOf('/') < 0))){
+    const base = (cur && cur.file_path) ? cur.file_path : (renderFilePath || '');
+    if(base){
+      const dir = base.lastIndexOf('/') >= 0 ? base.substring(0, base.lastIndexOf('/')) : '';
+      let resolved = dir ? (dir + '/' + p) : p;
+      const parts = resolved.split('/');
+      const out = [];
+      for(let i=0; i<parts.length; i++){
+        const part = parts[i];
+        if(part === '..'){ out.pop(); }
+        else if(part !== '.' && part !== ''){ out.push(part); }
+      }
+      p = out.join('/');
+    }
+  }
   return '/api/raw?domain='+encodeURIComponent(domain)+'&path='+encodeURIComponent(p)+(download?'&download=1':'');
 }
 function rawUrl(domain, path, download){ return rawUrlOf(domain, path, download); }
