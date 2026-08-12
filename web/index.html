@@ -273,6 +273,18 @@ body.nav-hidden .pane-nav{opacity:0; pointer-events:none; border-color:transpare
 }
 .img-wrap:hover .img-dl{opacity:1}
 
+/* 数学块 hover 复制按钮（MathJax 渲染后用 span 包裹） */
+.math-block{position:relative; display:inline-block}
+.math-block mjx-container{display:inline-block}
+.math-dl{
+  position:absolute; top:-8px; right:-8px; display:inline-flex; align-items:center; gap:3px;
+  background:rgba(9,14,20,.7); color:#fff; border-radius:6px; padding:2px 6px;
+  font-size:10px; text-decoration:none; opacity:0; transition:opacity .15s; z-index:3;
+  cursor:pointer;
+}
+.math-block:hover .math-dl{opacity:1}
+.math-dl:hover{background:rgba(9,14,20,.85)}
+
 /* 代码 / mermaid 工具条 */
 .codeblock{position:relative}
 .block-tools{position:absolute; top:6px; right:6px; display:flex; gap:4px; opacity:0; transition:opacity .15s; z-index:2}
@@ -878,10 +890,13 @@ async function _renderMdAsync(mdText, el){
     return pre + '@@MATH' + (mathStash.length - 1) + '@@';
   });
   el.innerHTML = marked.parse(txt);
+  /* 还原数学占位 + 用 span 包裹保留 LaTeX 源码（MathJax 渲染后源码会丢失） */
   if(mathStash.length){
     let html = el.innerHTML;
     for(let i=0; i<mathStash.length; i++){
-      html = html.split('@@MATH' + i + '@@').join(mathStash[i]);
+      const src = mathStash[i];
+      const attr = src.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+      html = html.split('@@MATH' + i + '@@').join('<span class="math-block" data-tex="'+attr+'">'+src+'</span>');
     }
     el.innerHTML = html;
   }
@@ -953,16 +968,37 @@ async function _renderMdAsync(mdText, el){
     /* mermaid 全部渲染完，再补加 mermaid 工具按钮（mermaid run 把 div innerHTML 替换为 SVG 时会清掉按钮） */
     addMermaidTools(el);
   }
-  /* MathJax：数学占位已还原，等 MathJax startup 就绪后 typesetClear + typeset */
+  /* MathJax：数学占位已还原，等 MathJax startup 就绪后 typesetClear + typeset → 加复制按钮 */
   if(window.MathJax){
     try{
       const ready = (MathJax.startup && MathJax.startup.promise) ? MathJax.startup.promise : Promise.resolve();
       ready.then(function(){
         try{ if(MathJax.typesetClear) MathJax.typesetClear([el]); }catch(e){}
         try{ return MathJax.typesetPromise([el]); }catch(e){}
+      }).then(function(){
+        /* MathJax 渲染完成，给每个 .math-block 加复制按钮（保留的 data-tex 即 LaTeX 源码） */
+        addMathCopyButtons(el);
       }).catch(function(){});
     }catch(e){}
   }
+}
+function addMathCopyButtons(el){
+  el.querySelectorAll('.math-block').forEach(function(mb){
+    if(mb.querySelector('.math-dl')) return; /* 已加，幂等 */
+    const tex = mb.getAttribute('data-tex') || '';
+    if(!tex) return;
+    const a = document.createElement('a');
+    a.className = 'math-dl';
+    a.href = '#';
+    a.innerHTML = icon('copy') + 'LaTeX';
+    a.title = '复制 LaTeX 源码';
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      copyText(tex, 'LaTeX 已复制');
+    });
+    mb.appendChild(a);
+  });
 }
 function wrapImg(im, rawUrl){
   const wrap = document.createElement('span');
