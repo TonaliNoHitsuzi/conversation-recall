@@ -863,7 +863,25 @@ function fallbackCopy(txt, done){
 /* ==================== 渲染管线（顺序固定：marked → 图片重写 → mermaid → hljs → MathJax） ==================== */
 let renderDomain = null;   // 当前渲染上下文的 domain（图片重写用）
 function renderMd(mdText, el){
-  el.innerHTML = marked.parse(mdText || '(空)');
+  /* Fix 3: 数学块先抽出占位，防 marked 把 \\ 吃成 \（矩阵换行依赖 \\） */
+  const mathStash = [];
+  let txt = mdText || '(空)';
+  txt = txt.replace(/\$\$([\s\S]+?)\$\$/g, function(_, body){
+    mathStash.push('$$' + body + '$$');
+    return '\n\n@@MATH' + (mathStash.length - 1) + '@@\n\n';
+  });
+  txt = txt.replace(/(^|[^\\\$])\$([^\n\$][^\n\$]*?)\$(?!\d)/g, function(_, pre, body){
+    mathStash.push('$' + body + '$');
+    return pre + '@@MATH' + (mathStash.length - 1) + '@@';
+  });
+  el.innerHTML = marked.parse(txt);
+  if(mathStash.length){
+    let html = el.innerHTML;
+    for(let i=0; i<mathStash.length; i++){
+      html = html.split('@@MATH' + i + '@@').join(mathStash[i]);
+    }
+    el.innerHTML = html;
+  }
   /* 需求 1：图片相对路径 → /api/raw */
   el.querySelectorAll('img').forEach(function(im){
     const src = im.getAttribute('src') || '';
@@ -879,6 +897,17 @@ function renderMd(mdText, el){
     im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(ph);
     wrapImg(im, null);
   });
+  /* Fix 2: <a href> 本地文件链接也走 /api/raw（PDF、doc、zip 等）。
+     http(s)/#/mailto/@@MATH 跳过；其余按当前 domain 的相对路径解析。 */
+  el.querySelectorAll('a').forEach(function(a){
+    const href = a.getAttribute('href') || '';
+    if(!href || /^https?:\/\//i.test(href) || href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('@@MATH')) return;
+    if(renderDomain){
+      a.href = rawUrlOf(renderDomain, href, 0);
+      a.target = '_blank';
+      a.rel = 'noopener';
+    }
+  });
   /* mermaid */
   el.querySelectorAll('code.language-mermaid').forEach(function(c){
     const pre = c.parentNode, d = document.createElement('div');
@@ -887,10 +916,21 @@ function renderMd(mdText, el){
     d.textContent = c.textContent;
     pre.replaceWith(d);
   });
-  /* mermaid.run 是 async（v11）：发起渲染 → 同步加 pre 类 + hljs → addBlockTools（pre 的按钮此时安全）
-     → 等 mermaid 完成后再次 addBlockTools（mermaid 会用 SVG 覆盖 div 内 innerHTML，把按钮一并清掉，所以必须补加一次） */
+  /* Fix 1: mermaid 逐个渲染（v11 batch 模式遇错会停后续节点；改每个独立 try/catch） */
+  const mermaidNodes = el.querySelectorAll('.mermaid');
   let mPromise = null;
-  if(window.mermaid){ try{ mPromise = mermaid.run({nodes: el.querySelectorAll('.mermaid')}); }catch(e){} }
+  if(window.mermaid && mermaidNodes.length){
+    mPromise = (async function(){
+      const ESC = function(s){ return String(s).replace(/[<>&]/g, function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];}); };
+      for(let i=0; i<mermaidNodes.length; i++){
+        const node = mermaidNodes[i];
+        try{ await mermaid.run({nodes: [node]}); }
+        catch(e){
+          node.innerHTML = '<div style="color:var(--bad,#cf222e);font-size:12px;padding:8px;border:1px dashed currentColor;border-radius:6px;margin:6px 0">⚠ Mermaid 渲染失败：'+ ESC(e.message||e).substring(0,300) + '<br><pre style="margin:6px 0 0;white-space:pre-wrap;font-size:11px;color:var(--ink-3,#656d76)">'+ ESC(node.dataset.mmd||'').substring(0,400) + '</pre></div>';
+        }
+      }
+    })();
+  }
   /* hljs + 代码工具条 */
   el.querySelectorAll('pre').forEach(function(pre){
     const code = pre.querySelector('code');
@@ -898,6 +938,15 @@ function renderMd(mdText, el){
     pre.classList.add('codeblock');
     pre.dataset.src = code.textContent;
     if(window.hljs){ try{ hljs.highlightElement(code); }catch(e){} }
+  });
+  /* Fix 4: 表格容器化共用 addBlockTools 的 .codeblock 复制逻辑（dataset.src 存 outerHTML） */
+  el.querySelectorAll('table').forEach(function(t){
+    if(t.parentElement && t.parentElement.classList.contains('table-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'table-wrap codeblock';
+    wrap.dataset.src = t.outerHTML;
+    t.parentNode.insertBefore(wrap, t);
+    wrap.appendChild(t);
   });
   addBlockTools(el);
   if(mPromise && typeof mPromise.then === 'function'){
@@ -917,6 +966,35 @@ function wrapImg(im, rawUrl){
     a.innerHTML = icon('download') + '下载';
     a.title = '下载图片';
     a.addEventListener('click', e=>e.stopPropagation());
+    wrap.appendChild(a);
+    return;
+  }
+  /* 外部 URL 图片：fetch + blob 下载（跨域可能失败，回退提示右键另存） */
+  const extSrc = im.getAttribute('src') || '';
+  if(/^https?:\/\//i.test(extSrc)){
+    const a = document.createElement('a');
+    a.className = 'img-dl';
+    a.href = '#';
+    a.innerHTML = icon('download') + '下载';
+    a.title = '下载图片（跨域可能失败，失败请右键另存）';
+    a.addEventListener('click', async function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      try{
+        const r = await fetch(extSrc, {mode:'cors'});
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+        const b = await r.blob();
+        const url = URL.createObjectURL(b);
+        const t = document.createElement('a');
+        t.href = url;
+        t.download = extSrc.split('/').pop().split('?')[0] || 'image';
+        document.body.appendChild(t); t.click(); t.remove();
+        setTimeout(()=>URL.revokeObjectURL(url), 4000);
+        toast('已下载','good',1500);
+      }catch(err){
+        toast('跨域下载失败，请右键图片另存', 'bad');
+      }
+    });
     wrap.appendChild(a);
   }
 }
