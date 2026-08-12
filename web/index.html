@@ -342,6 +342,20 @@ body.nav-hidden .pane-nav{opacity:0; pointer-events:none; border-color:transpare
 .modal textarea{width:100%; resize:vertical; min-height:100px; font:13px/1.6 var(--font)}
 .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:14px}
 .modal .hint{font-size:11px; color:var(--ink-3); margin-top:8px}
+
+/* 目录浏览器（叠在新库 modal 之上） */
+#dirBrowserRoot .overlay{z-index:90}
+#dirBrowserRoot .modal{width:min(560px,96vw); max-height:80vh; display:flex; flex-direction:column}
+.dirb-path{display:flex; align-items:center; gap:6px; padding:8px 10px; background:var(--panel-2); border:1px solid var(--line); border-radius:7px; margin-bottom:8px; font:13px var(--mono)}
+.dirb-path code{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink)}
+.dirb-list{flex:1; min-height:240px; max-height:50vh; overflow-y:auto; border:1px solid var(--line); border-radius:7px; background:var(--panel-2)}
+.dirb-item{display:flex; align-items:center; gap:8px; padding:7px 12px; cursor:pointer; border-bottom:1px solid var(--line)}
+.dirb-item:last-child{border-bottom:0}
+.dirb-item:hover{background:var(--accent-soft); color:var(--accent)}
+.dirb-item.up{color:var(--ink-2); font-style:italic}
+.dirb-item .ic{color:var(--accent); flex:0 0 auto}
+.dirb-empty{padding:30px; text-align:center; color:var(--ink-3); font-size:12px}
+
 .fld-row{margin-bottom:12px}
 .fld-row label{display:block; font-size:12px; font-weight:600; margin-bottom:4px}
 .fld-row .fld-sub{font-size:11px; color:var(--ink-3); font-weight:400}
@@ -509,6 +523,7 @@ details.adv .adv-body{padding:8px 0 0}
 
 <div id="toastRoot"></div>
 <div id="modalRoot"></div>
+<div id="dirBrowserRoot" hidden></div>
 
 <script>window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']],processEscapes:true,processEnvironments:true,packages:{'[+]':['ams','cases','mathtools','physics','noerrors','noundefined']}},svg:{fontCache:'global'},chtml:{fontURL:'https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']}};</script>
 <script src="assets/marked.min.js"></script>
@@ -1758,13 +1773,13 @@ function openNewLibrary(){
   $('#modalRoot').innerHTML =
   '<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal" role="dialog">'+
     '<h3>新建库</h3>'+
-    '<p class="modal-sub">新建一个知识库域（<code>project:&lt;slug&gt;</code>）。后端会自动写配置、初始化索引并做首次同步。</p>'+
+    '<p class="modal-sub">新建一个知识库域。后端会自动写配置、初始化索引并做首次同步。</p>'+
     '<div class="fld-row"><label>slug <span class="fld-sub">英文短名，必填（小写字母开头，只能含小写字母/数字/下划线，如 my_notes）</span></label><input type="text" id="nlSlug" placeholder="如 searchlight"></div>'+
     '<div class="fld-row"><label>显示名 <span class="fld-sub">必填</span></label><input type="text" id="nlLabel" placeholder="如 探照灯认知"></div>'+
     '<div class="fld-row"><label>介绍</label><textarea id="nlDesc" placeholder="这个库装什么？"></textarea></div>'+
     '<div class="fld-row"><label>标签 <span class="fld-sub">回车添加</span></label><div class="tagbox" id="nlTagBox" onclick="this.querySelector(\'input\').focus()"><input type="text" placeholder="学习 / 工作 …"></div></div>'+
     '<div class="fld-row"><label>图标 <span class="fld-sub">emoji 或留空</span></label><input type="text" id="nlIcon" placeholder="📦" style="width:90px"></div>'+
-    '<div class="fld-row"><label>源目录 <span class="fld-sub">必填，本地绝对路径，如 D:/notes/searchlight</span></label><input type="text" id="nlRoot" placeholder="D:/..."></div>'+
+    '<div class="fld-row"><label>源目录 <span class="fld-sub">必填，本地绝对路径，如 D:/notes/searchlight</span></label><div style="display:flex;gap:6px"><input type="text" id="nlRoot" placeholder="D:/..." style="flex:1"><button class="btn" type="button" onclick="openDirBrowser()" title="浏览选择目录">📁 浏览</button></div></div>'+
     '<details class="adv"><summary>高级选项（索引规则）</summary><div class="adv-body">'+
       '<div class="fld-row"><label>index_globs</label><input type="text" id="nlIndexGlobs" value="**/*.md"></div>'+
       '<div class="fld-row"><label>store_only_globs</label><input type="text" id="nlStoreGlobs" placeholder="留空 = 不额外存储"></div>'+
@@ -1779,6 +1794,66 @@ function openNewLibrary(){
   });
   $('#nlSlug').focus();
 }
+
+/* ========== 目录浏览器（新库表单的源目录选择） ========== */
+let dirBrowserCurrent = '';
+let dirBrowserTarget = null;  // 接收选择结果的 input id
+
+async function openDirBrowser(targetInputId){
+  dirBrowserTarget = targetInputId || 'nlRoot';
+  $('#dirBrowserRoot').hidden = false;
+  $('#dirBrowserRoot').innerHTML =
+    '<div class="overlay" onclick="if(event.target===this)dirBrowserClose()"><div class="modal" role="dialog" aria-label="选择目录">'+
+      '<h3>选择源目录</h3>'+
+      '<p class="modal-sub">单击进入子目录，双击也可；用「↑ 返回上级」回退。选定后点「使用此目录」。</p>'+
+      '<div class="dirb-path"><span class="ic" style="color:var(--ink-3)">📁</span><code id="dirBrowserPath">(加载中…)</code></div>'+
+      '<div class="dirb-list" id="dirBrowserBody"><div class="dirb-empty">加载中…</div></div>'+
+      '<div class="modal-actions"><button class="btn" onclick="dirBrowserClose()">取消</button><button class="btn primary" onclick="dirBrowserConfirm()">使用此目录</button></div>'+
+    '</div></div>';
+  const initial = $('#' + dirBrowserTarget) ? $('#' + dirBrowserTarget).value.trim() : '';
+  await dirBrowserLoad(initial);
+}
+
+async function dirBrowserLoad(path){
+  let url = '/api/dirlist?';
+  if(path) url += 'path=' + encodeURIComponent(path);
+  let r;
+  try{ r = await api(url); }
+  catch(e){ $('#dirBrowserBody').innerHTML = '<div class="dirb-empty">加载失败：' + esc(e.message||'') + '</div>'; return; }
+  if(r.err){ $('#dirBrowserBody').innerHTML = '<div class="dirb-empty">' + esc(r.err) + '</div>'; return; }
+  dirBrowserCurrent = r.current || '';
+  // 路径栏
+  const pathStr = dirBrowserCurrent || '(我的电脑 / 根目录)';
+  $('#dirBrowserPath').textContent = pathStr;
+  // 列表
+  let html = '';
+  if(r.parent !== null && r.parent !== undefined){
+    html += '<div class="dirb-item up" onclick="dirBrowserLoad(' + JSON.stringify(r.parent) + ')">' + icon('car') + ' 返回上级目录</div>';
+  }
+  const dirs = r.dirs || [];
+  if(!dirs.length && !html){
+    html = '<div class="dirb-empty">空目录</div>';
+  } else {
+    dirs.forEach(function(d){
+      const full = dirBrowserCurrent ? (dirBrowserCurrent.replace(/\/+$/, '') + '/' + d) : d;
+      html += '<div class="dirb-item" onclick="dirBrowserLoad(' + JSON.stringify(full) + ')">' + icon('folder') + ' ' + esc(d) + '</div>';
+    });
+  }
+  $('#dirBrowserBody').innerHTML = html;
+}
+
+function dirBrowserConfirm(){
+  if(dirBrowserTarget && $('#' + dirBrowserTarget)){
+    $('#' + dirBrowserTarget).value = dirBrowserCurrent;
+  }
+  dirBrowserClose();
+}
+
+function dirBrowserClose(){
+  $('#dirBrowserRoot').hidden = true;
+  $('#dirBrowserRoot').innerHTML = '';
+}
+
 function renderNewLibTags(){
   const box = $('#nlTagBox');
   box.querySelectorAll('.tchip').forEach(c=>c.remove());

@@ -552,6 +552,46 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, _jsend({"libraries": libs, "folders": folders.get("folders", [])}))
             elif p == "/api/folders":
                 self._send(200, _jsend(kb_core.list_folders(META_DB) if META_DB else {"folders": [], "unassigned": []}))
+            elif p == "/api/dirlist":
+                # 目录浏览器：列出指定路径下的子目录（仅目录，不含文件）
+                # 路径为空时列盘符（Windows）或根（Unix）；本地单用户工具，不做路径白名单
+                raw = qs.get("path", [""])[0]
+                if not raw:
+                    import string
+                    if os.name == 'nt':
+                        drives = [letter + ':/' for letter in string.ascii_uppercase if os.path.exists(letter + ':/')]
+                    else:
+                        drives = ['/']
+                    self._send(200, _jsend({"current": "", "parent": None, "dirs": drives, "is_root": True}))
+                else:
+                    path = os.path.abspath(raw)
+                    if not os.path.isdir(path):
+                        self._send(400, _jsend({"err": "不是有效目录: " + raw}))
+                    else:
+                        try:
+                            entries = sorted(os.listdir(path))
+                        except PermissionError:
+                            self._send(403, _jsend({"err": "无权限访问: " + path}))
+                        except Exception as e:
+                            self._send(400, _jsend({"err": str(e)}))
+                        else:
+                            # 仅保留目录，隐藏点开头（系统/隐藏）
+                            dirs = [e for e in entries if not e.startswith('.') and os.path.isdir(os.path.join(path, e))]
+                            # 计算父目录：盘符根时父为 None（不可再上）
+                            norm = path.replace('\\', '/').rstrip('/')
+                            parent = None
+                            if '/' in norm:
+                                head = norm.rsplit('/', 1)[0]
+                                # 如果剩下的是 "D:" 这种盘符，仍允许返回（用户可继续往上）
+                                parent = head + '/' if head else None
+                            elif os.name == 'nt' and len(norm) == 2 and norm[1] == ':':
+                                parent = None  # 盘符根，不可再上
+                            self._send(200, _jsend({
+                                "current": path.replace('\\', '/'),
+                                "parent": parent,
+                                "dirs": dirs,
+                                "is_root": False
+                            }))
             elif p == "/api/siblings":
                 doc_id = qs.get("doc_id", [""])[0]
                 if not doc_id:
@@ -567,7 +607,9 @@ class Handler(BaseHTTPRequestHandler):
                                 if blocks:
                                     dcfg = d; break
                     if not dcfg:
-                        self._send(404, _jsend({"err": "doc 不存在于任何已启用域"}))
+                        # 不是文档域（可能是对话会话）→ 返回空 siblings，不要 404
+                        # 前端 api() 在非 200 时抛错，会污染整个 expand 流程
+                        self._send(200, _jsend({"same_folder": [], "referenced_images": [], "week_mate": []}))
                     else:
                         sr = dcfg.get("source_root")
                         self._send(200, _jsend(kb_core.list_siblings(dcfg["db_path"], doc_id, source_root=sr)))
