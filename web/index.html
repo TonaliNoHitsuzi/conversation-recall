@@ -1496,7 +1496,8 @@ function rawUrlOf(domain, path, download){
   /* v3 fix: 相对路径（./ 或 ../ 或裸文件名）按当前 doc 的 file_path 解析。
      marked 给的 src 是相对 md 文件所在目录的，必须 join 后才能命中 source_root 子树。 */
   if(p && !/^https?:\/\//i.test(p) && !p.startsWith('data:') && (p.startsWith('./') || p.startsWith('../') || (p.indexOf('/') < 0))){
-    const base = (cur && cur.file_path) ? cur.file_path : (renderFilePath || '');
+    /* v3 fix: 相对路径按当前 doc 的 file_path 解析；file_path 为空（如 conversation）则跳过解析 */
+    const base = (cur && cur.file_path) ? cur.file_path : '';
     if(base){
       const dir = base.lastIndexOf('/') >= 0 ? base.substring(0, base.lastIndexOf('/')) : '';
       let resolved = dir ? (dir + '/' + p) : p;
