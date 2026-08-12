@@ -498,7 +498,7 @@ details.adv .adv-body{padding:8px 0 0}
 <div id="toastRoot"></div>
 <div id="modalRoot"></div>
 
-<script>window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']]},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']}};</script>
+<script>window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']],packages:{'[+]':['ams','cases','mathtools','physics']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']},startup:{typeset:false}};</script>
 <script src="assets/marked.min.js"></script>
 <script src="assets/highlight.min.js"></script>
 <script src="assets/mermaid.min.js"></script>
@@ -863,6 +863,9 @@ function fallbackCopy(txt, done){
 /* ==================== 渲染管线（顺序固定：marked → 图片重写 → mermaid → hljs → MathJax） ==================== */
 let renderDomain = null;   // 当前渲染上下文的 domain（图片重写用）
 function renderMd(mdText, el){
+  return _renderMdAsync(mdText, el);
+}
+async function _renderMdAsync(mdText, el){
   /* Fix 3: 数学块先抽出占位，防 marked 把 \\ 吃成 \（矩阵换行依赖 \\） */
   const mathStash = [];
   let txt = mdText || '(空)';
@@ -916,21 +919,6 @@ function renderMd(mdText, el){
     d.textContent = c.textContent;
     pre.replaceWith(d);
   });
-  /* Fix 1: mermaid 逐个渲染（v11 batch 模式遇错会停后续节点；改每个独立 try/catch） */
-  const mermaidNodes = el.querySelectorAll('.mermaid');
-  let mPromise = null;
-  if(window.mermaid && mermaidNodes.length){
-    mPromise = (async function(){
-      const ESC = function(s){ return String(s).replace(/[<>&]/g, function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];}); };
-      for(let i=0; i<mermaidNodes.length; i++){
-        const node = mermaidNodes[i];
-        try{ await mermaid.run({nodes: [node]}); }
-        catch(e){
-          node.innerHTML = '<div style="color:var(--bad,#cf222e);font-size:12px;padding:8px;border:1px dashed currentColor;border-radius:6px;margin:6px 0">⚠ Mermaid 渲染失败：'+ ESC(e.message||e).substring(0,300) + '<br><pre style="margin:6px 0 0;white-space:pre-wrap;font-size:11px;color:var(--ink-3,#656d76)">'+ ESC(node.dataset.mmd||'').substring(0,400) + '</pre></div>';
-        }
-      }
-    })();
-  }
   /* hljs + 代码工具条 */
   el.querySelectorAll('pre').forEach(function(pre){
     const code = pre.querySelector('code');
@@ -948,11 +936,25 @@ function renderMd(mdText, el){
     t.parentNode.insertBefore(wrap, t);
     wrap.appendChild(t);
   });
+  /* Fix 1 重做：先同步 addBlockTools 给 pre/table（不涉及 mermaid，安全）→ 再 await mermaid 逐块渲染
+     → 全部完成后再 addMermaidTools 给 mermaid（之前同步加会在 mermaid 把按钮文字混入 textContent，
+     导致后续块 parse error） */
   addBlockTools(el);
-  if(mPromise && typeof mPromise.then === 'function'){
-    mPromise.then(function(){ addBlockTools(el); }).catch(function(){});
+  if(window.mermaid){
+    const mermaidNodes = el.querySelectorAll('.mermaid');
+    const ESC = function(s){ return String(s).replace(/[<>&]/g, function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];}); };
+    for(let i=0; i<mermaidNodes.length; i++){
+      const node = mermaidNodes[i];
+      try{ await mermaid.run({nodes: [node]}); }
+      catch(e){
+        node.innerHTML = '<div style="color:var(--bad,#cf222e);font-size:12px;padding:8px;border:1px dashed currentColor;border-radius:6px;margin:6px 0">⚠ Mermaid 渲染失败：'+ ESC(e.message||e).substring(0,300) + '<br><pre style="margin:6px 0 0;white-space:pre-wrap;font-size:11px;color:var(--ink-3,#656d76)">'+ ESC(node.dataset.mmd||'').substring(0,400) + '</pre></div>';
+      }
+    }
+    /* mermaid 全部渲染完，再补加 mermaid 工具按钮（mermaid run 把 div innerHTML 替换为 SVG 时会清掉按钮） */
+    addMermaidTools(el);
   }
-  if(window.MathJax && MathJax.typesetPromise){ try{ MathJax.typesetPromise([el]); }catch(e){} }
+  /* MathJax：数学占位已还原，typeset 触发渲染 */
+  if(window.MathJax && MathJax.typesetPromise){ try{ await MathJax.typesetPromise([el]); }catch(e){} }
 }
 function wrapImg(im, rawUrl){
   const wrap = document.createElement('span');
@@ -1016,7 +1018,27 @@ function addBlockTools(el){
     });
     pre.appendChild(tools);
   });
-  /* mermaid：复制源码 + 导出 */
+  /* 表格：复制为 HTML（富文本粘贴）/ 下载 */
+  el.querySelectorAll('.table-wrap.codeblock').forEach(function(wrap){
+    if(wrap.querySelector('.block-tools')) return;
+    const tools = document.createElement('div');
+    tools.className = 'block-tools';
+    tools.innerHTML =
+      '<button class="tbtn" data-act="copy">'+icon('copy')+'复制 HTML</button>'+
+      '<button class="tbtn" data-act="dl">'+icon('download')+'</button>';
+    tools.querySelector('[data-act="copy"]').addEventListener('click', ()=>copyText(wrap.dataset.src || wrap.textContent, '表格 HTML 已复制'));
+    tools.querySelector('[data-act="dl"]').addEventListener('click', ()=>{
+      const blob = new Blob([wrap.dataset.src || wrap.textContent], {type:'text/html'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'table.html'; a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+    });
+    wrap.appendChild(tools);
+  });
+  /* mermaid：复制源码 + 导出（注意：在 mermaid.run 完成后由 addMermaidTools 单独调用，
+     否则同步加会把按钮文字混进 textContent，导致 mermaid parse error） */
+}
+function addMermaidTools(el){
   el.querySelectorAll('.mermaid.codeblock').forEach(function(d){
     if(d.querySelector('.block-tools')) return;
     const tools = document.createElement('div');
@@ -1075,18 +1097,21 @@ function rerenderMermaid(){
   if(!window.mermaid) return;
   const nodes = document.querySelectorAll('.mermaid[data-mmd]');
   if(!nodes.length) return;
-  nodes.forEach(d => { d.removeAttribute('data-processed'); d.textContent = d.dataset.mmd; });
-  try{
-    const p = mermaid.run({nodes});
-    /* 切主题后 mermaid 重渲染同样会清掉按钮 → 重加 */
-    if(p && typeof p.then === 'function'){
-      p.then(function(){ 
-        nodes.forEach(n => {
-          if(n.parentElement) addBlockTools(n.parentElement);
-        });
-      }).catch(function(){});
+  /* 清掉旧按钮和 data-processed，还原 textContent 为源码（防按钮文字混入） */
+  nodes.forEach(d => {
+    d.removeAttribute('data-processed');
+    /* 移除旧的 block-tools（若有） */
+    d.querySelectorAll('.block-tools').forEach(t => t.remove());
+    d.textContent = d.dataset.mmd;
+  });
+  /* 逐个渲染，与 _renderMdAsync 一致 */
+  (async function(){
+    for(let i=0; i<nodes.length; i++){
+      try{ await mermaid.run({nodes: [nodes[i]]}); }
+      catch(e){ /* 静默，渲染失败的留空 */ }
     }
-  }catch(e){}
+    nodes.forEach(n => { if(n.parentElement) addMermaidTools(n.parentElement); });
+  })();
 }
 </script>
 <script>
