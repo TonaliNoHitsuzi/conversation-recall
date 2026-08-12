@@ -1795,63 +1795,27 @@ function openNewLibrary(){
   $('#nlSlug').focus();
 }
 
-/* ========== 目录浏览器（新库表单的源目录选择） ========== */
-let dirBrowserCurrent = '';
-let dirBrowserTarget = null;  // 接收选择结果的 input id
-
+/* ========== 源目录选择（调 Windows 原生 FolderBrowserDialog） ========== */
 async function openDirBrowser(targetInputId){
-  dirBrowserTarget = targetInputId || 'nlRoot';
-  $('#dirBrowserRoot').hidden = false;
-  $('#dirBrowserRoot').innerHTML =
-    '<div class="overlay" onclick="if(event.target===this)dirBrowserClose()"><div class="modal" role="dialog" aria-label="选择目录">'+
-      '<h3>选择源目录</h3>'+
-      '<p class="modal-sub">单击进入子目录，双击也可；用「↑ 返回上级」回退。选定后点「使用此目录」。</p>'+
-      '<div class="dirb-path"><span class="ic" style="color:var(--ink-3)">📁</span><code id="dirBrowserPath">(加载中…)</code></div>'+
-      '<div class="dirb-list" id="dirBrowserBody"><div class="dirb-empty">加载中…</div></div>'+
-      '<div class="modal-actions"><button class="btn" onclick="dirBrowserClose()">取消</button><button class="btn primary" onclick="dirBrowserConfirm()">使用此目录</button></div>'+
-    '</div></div>';
-  const initial = $('#' + dirBrowserTarget) ? $('#' + dirBrowserTarget).value.trim() : '';
-  await dirBrowserLoad(initial);
-}
-
-async function dirBrowserLoad(path){
-  let url = '/api/dirlist?';
-  if(path) url += 'path=' + encodeURIComponent(path);
-  let r;
-  try{ r = await api(url); }
-  catch(e){ $('#dirBrowserBody').innerHTML = '<div class="dirb-empty">加载失败：' + esc(e.message||'') + '</div>'; return; }
-  if(r.err){ $('#dirBrowserBody').innerHTML = '<div class="dirb-empty">' + esc(r.err) + '</div>'; return; }
-  dirBrowserCurrent = r.current || '';
-  // 路径栏
-  const pathStr = dirBrowserCurrent || '(我的电脑 / 根目录)';
-  $('#dirBrowserPath').textContent = pathStr;
-  // 列表
-  let html = '';
-  if(r.parent !== null && r.parent !== undefined){
-    html += '<div class="dirb-item up" onclick="dirBrowserLoad(' + JSON.stringify(r.parent) + ')">' + icon('car') + ' 返回上级目录</div>';
+  const tgt = targetInputId || 'nlRoot';
+  const input = $('#' + tgt);
+  if(!input) return;
+  const btn = event && event.target ? event.target.closest('button') : null;
+  if(btn){ btn.disabled = true; const orig = btn.innerHTML; btn.innerHTML = '⏳ 等待选择…'; }
+  try{
+    const r = await post('/api/pick-folder', {});
+    if(r && r.path){
+      input.value = r.path;
+      toast('已选择：' + r.path, 'good', 2000);
+    } else if(r && r.err){
+      toast('选择失败：' + r.err, 'bad');
+    }
+    /* 用户取消 → 静默，无 toast */
+  }catch(e){
+    toast('调用失败：' + (e.message||''), 'bad');
+  }finally{
+    if(btn){ btn.disabled = false; btn.innerHTML = '📁 浏览'; }
   }
-  const dirs = r.dirs || [];
-  if(!dirs.length && !html){
-    html = '<div class="dirb-empty">空目录</div>';
-  } else {
-    dirs.forEach(function(d){
-      const full = dirBrowserCurrent ? (dirBrowserCurrent.replace(/\/+$/, '') + '/' + d) : d;
-      html += '<div class="dirb-item" onclick="dirBrowserLoad(' + JSON.stringify(full) + ')">' + icon('folder') + ' ' + esc(d) + '</div>';
-    });
-  }
-  $('#dirBrowserBody').innerHTML = html;
-}
-
-function dirBrowserConfirm(){
-  if(dirBrowserTarget && $('#' + dirBrowserTarget)){
-    $('#' + dirBrowserTarget).value = dirBrowserCurrent;
-  }
-  dirBrowserClose();
-}
-
-function dirBrowserClose(){
-  $('#dirBrowserRoot').hidden = true;
-  $('#dirBrowserRoot').innerHTML = '';
 }
 
 function renderNewLibTags(){

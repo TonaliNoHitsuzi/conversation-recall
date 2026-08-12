@@ -765,6 +765,31 @@ class Handler(BaseHTTPRequestHandler):
                               "folder_id": data["folder_id"], "undo": "（无法撤销）",
                               "actor": self.client_address[0]})
                 self._send(200, _jsend(r))
+            elif p == "/api/pick-folder":
+                # 调用 Windows 原生 FolderBrowserDialog（PowerShell 子进程）
+                import subprocess
+                ps_script = (
+                    "Add-Type -AssemblyName System.Windows.Forms\n"
+                    "$d = New-Object System.Windows.Forms.FolderBrowserDialog\n"
+                    "$d.Description = '为知识库选择源目录'\n"
+                    "$d.ShowNewFolderButton = $true\n"
+                    "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {\n"
+                    "    Write-Output $d.SelectedPath\n"
+                    "} else {\n"
+                    "    Write-Output ''\n"
+                    "}\n"
+                )
+                try:
+                    result = subprocess.run(
+                        ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps_script],
+                        capture_output=True, text=True, timeout=300, encoding='utf-8'
+                    )
+                    picked = (result.stdout or '').strip().replace('\\', '/').rstrip('/')
+                    self._send(200, _jsend({"path": picked or None}))
+                except subprocess.TimeoutExpired:
+                    self._send(200, _jsend({"path": None, "err": "选择超时"}))
+                except Exception as e:
+                    self._send(500, _jsend({"err": str(e)}))
             else:
                 self._send(404, b'{"err":"not found"}')
         except Exception:
