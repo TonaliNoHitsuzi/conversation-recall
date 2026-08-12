@@ -6,6 +6,7 @@ index/
 
 # ── 用户配置（含本机绝对路径，每人不同）──
 config.json
+config.json.bak
 
 # ── Python 缓存 ──
 __pycache__/

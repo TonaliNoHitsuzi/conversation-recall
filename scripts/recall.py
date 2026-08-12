@@ -178,17 +178,22 @@ def load_config():
             continue
         slug = p.get("slug", "?")
         doc_domains.append({
-            "kind": "doc", "key": "project:" + slug, "label": "成果·" + p.get("label", slug),
+            "kind": "doc", "key": "project:" + slug,
+            "label": p.get("label", slug),  # v3: 不再强制加 "成果·" 前缀（前端自决显示）
             "db_path": p.get("db_path"), "source_root": p.get("source_root"),
             "source_glob": p.get("source_glob", "**/*.md"),
             "index_globs": p.get("index_globs"), "store_only_globs": p.get("store_only_globs"),
             "domain": "project:" + slug, "enabled": True,
+            # v3 元信息
+            "description": p.get("description", ""), "tags": p.get("tags", []),
+            "icon": p.get("icon", "📁"),
         })
     gray = cfg.get("gray", {})
     meta = cfg.get("meta", {})
     CONFIG = {
         "conversation": conv_cfg,
         "doc_domains": doc_domains,
+        "projects": cfg.get("projects", []),  # v3: 保留原 projects 供 /api/libraries 用
         "gray": gray,
         "meta_db": meta.get("db_path"),
         "thresholds": cfg.get("thresholds", {}),

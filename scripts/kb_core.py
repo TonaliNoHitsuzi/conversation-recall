@@ -121,7 +121,42 @@ def ensure_doc_schema(con):
         frontmatter TEXT, mtime INTEGER, text_orig TEXT)""")
     con.execute("""CREATE TABLE IF NOT EXISTS doc_source (
         doc_id TEXT PRIMARY KEY, source_kind TEXT, origin TEXT)""")
+    # v3: sidecar 表，存每个 doc 的 genre/tags（不动 FTS5 虚拟表）
+    con.execute("""CREATE TABLE IF NOT EXISTS doc_genre (
+        doc_id TEXT PRIMARY KEY, genre TEXT, tags TEXT)""")
     con.commit()
+
+
+def infer_genre(file_path, index_glob_hit=None):
+    """根据文件相对路径推断 genre。返回字符串。
+    规则按周报/项目典型布局；未命中返回 '其他'。
+    file_path: 相对 source_root 的路径（正斜杠）。
+    index_glob_hit: 命中的 glob 字符串（可选，用于辅助判断）。
+    """
+    p = (file_path or "").replace("\\", "/").lower()
+    base = p.rsplit("/", 1)[-1]
+    # 周报正文
+    if base.startswith("周报.md") or base.startswith("weekly-report") or base == "周报.md":
+        return "周报正文"
+    # 周报摘要
+    if base.startswith("周报摘要") or base.startswith("leader-summary"):
+        return "周报摘要"
+    # 修改记录
+    if base.startswith("修改记录"):
+        return "周报元数据"
+    # 素材（按路径或 basename）
+    if "/素材/" in p or base.startswith("素材"):
+        return "素材"
+    # 产出/文档
+    if "/产出/文档/" in p:
+        return "技术文档"
+    # 产出/图片（理论上 .md 不会在这，但保险）
+    if "/产出/图片/" in p or "/产出/images/" in p or "/images/" in p:
+        return "图片"
+    # 计划
+    if "/计划/" in p:
+        return "计划"
+    return "其他"
 
 
 def _meta(con, k, d=None):
@@ -140,7 +175,14 @@ def _split_globs(s):
 
 
 def _match_any(name, globs):
-    return any(fnmatch(name, g) for g in globs)
+    """fnmatch 友好版：**/foo 也匹配顶层 foo（无目录前缀）。"""
+    for g in globs:
+        if fnmatch(name, g):
+            return True
+        # v3: **/foo 模式也匹配顶层 foo（避免新库根目录文件漏索引）
+        if g.startswith("**/") and fnmatch(name, g[3:]):
+            return True
+    return False
 
 
 def _excluded(relpath, basename, excludes):
@@ -198,7 +240,8 @@ def sync_doc_domain(cfg, force=False):
     con.execute("DELETE FROM doc_idx WHERE doc_id NOT IN (SELECT doc_id FROM doc_source WHERE source_kind IN ('upload','revived'))")
     con.execute("DELETE FROM doc_source WHERE source_kind='folder'")
     con.execute("DELETE FROM material_store")
-    idx_batch, sto_batch, src_batch = [], [], []
+    con.execute("DELETE FROM doc_genre WHERE doc_id NOT IN (SELECT doc_id FROM doc_source WHERE source_kind IN ('upload','revived'))")
+    idx_batch, sto_batch, src_batch, genre_batch = [], [], [], []
     for f in idx_files:
         try:
             txt = open(f, encoding="utf-8", errors="replace").read()
@@ -215,6 +258,7 @@ def sync_doc_domain(cfg, force=False):
             idx_batch.append((section_id_of(f, s["heading"]), did, domain, rel, title,
                               s["heading"], s["level"], mt, body, seg(body)))
         src_batch.append((did, "folder", rel))
+        genre_batch.append((did, infer_genre(rel), ""))
     for f in sto_files:
         try:
             txt = open(f, encoding="utf-8", errors="replace").read()
@@ -234,6 +278,8 @@ def sync_doc_domain(cfg, force=False):
         con.executemany("INSERT INTO material_store (doc_id,file_path,file_title,frontmatter,mtime,text_orig) VALUES (?,?,?,?,?,?)", sto_batch)
     if src_batch:
         con.executemany("INSERT OR REPLACE INTO doc_source(doc_id,source_kind,origin) VALUES (?,?,?)", src_batch)
+    if genre_batch:
+        con.executemany("INSERT OR REPLACE INTO doc_genre(doc_id,genre,tags) VALUES (?,?,?)", genre_batch)
     _metaset(con, "watermark_mtime", folder_doc_max)
     _metaset(con, "indexed_count", len(idx_batch))
     _metaset(con, "material_count", len(sto_batch))
@@ -244,9 +290,10 @@ def sync_doc_domain(cfg, force=False):
                   "stored": len(sto_batch), "files": len(files)}
 
 
-def ingest_file(db_path, domain, md_text, source_path=None, title=None, mtime=None):
+def ingest_file(db_path, domain, md_text, source_path=None, title=None, mtime=None, genre=None, tags=None):
     """增量上传：把一段 md 文本（通常来自 doc2md 或现成 md）入库为 source_kind=upload。
-    按 doc_id upsert（同源覆盖）。返回 {doc_id, sections, title}。"""
+    按 doc_id upsert（同源覆盖）。返回 {doc_id, sections, title, genre}。
+    genre 不传则按 source_path 自动推断；tags 为可选逗号分隔字符串。"""
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     con = sqlite3.connect(db_path)
     con.execute("PRAGMA journal_mode=WAL")
@@ -261,6 +308,8 @@ def ingest_file(db_path, domain, md_text, source_path=None, title=None, mtime=No
         title = _fm_title_text(md_text) or "(上传文档)"
     if mtime is None:
         mtime = int(time.time() * 1000)
+    if genre is None:
+        genre = infer_genre(src)
     con.execute("DELETE FROM doc_idx WHERE doc_id=?", (did,))
     con.execute("DELETE FROM doc_source WHERE doc_id=?", (did,))
     secs = split_md(md_text)
@@ -274,12 +323,14 @@ def ingest_file(db_path, domain, md_text, source_path=None, title=None, mtime=No
     if batch:
         con.executemany("INSERT INTO doc_idx (section_id,doc_id,domain,file_path,file_title,heading_path,level,mtime,text_orig,text_seg) VALUES (?,?,?,?,?,?,?,?,?,?)", batch)
     con.execute("INSERT OR REPLACE INTO doc_source(doc_id,source_kind,origin) VALUES (?,?,?)", (did, "upload", src))
+    con.execute("INSERT OR REPLACE INTO doc_genre(doc_id,genre,tags) VALUES (?,?,?)",
+                (did, genre, tags or ""))
     con.commit()
     con.close()
-    return {"doc_id": did, "sections": len(batch), "title": title}
+    return {"doc_id": did, "sections": len(batch), "title": title, "genre": genre}
 
 
-def query_doc_db(db_path, queries, limit=12, pool=50, since=None, until=None, negatives=None):
+def query_doc_db(db_path, queries, limit=12, pool=50, since=None, until=None, negatives=None, genre=None):
     if not available(db_path):
         return [], {q: 0 for q in queries}
     planned = [(q, build_match(q, negatives)) for q in queries]
@@ -291,6 +342,9 @@ def query_doc_db(db_path, queries, limit=12, pool=50, since=None, until=None, ne
             sql = ("SELECT section_id,doc_id,domain,file_path,file_title,heading_path,level,text_orig,"
                    "bm25(doc_idx) score FROM doc_idx WHERE text_seg MATCH ?")
             params = [match]
+            if genre:
+                sql += " AND doc_id IN (SELECT doc_id FROM doc_genre WHERE genre=?)"
+                params.append(genre)
             if since is not None:
                 sql += " AND mtime >= ?"
                 params.append(since)
@@ -387,10 +441,11 @@ def list_materials(db_path, limit=100):
         con.close()
 
 
-def browse_doc_db(db_path, since=None, until=None, limit=12):
+def browse_doc_db(db_path, since=None, until=None, limit=12, genre=None):
     """无关键词浏览：每个 doc_id 只取一条最新 section，按 mtime 倒序取 limit 个 doc。
 
     dedup 下沉到 SQL（window function），避免「先 LIMIT 再 dedup」时被高频 doc 占满配额。
+    genre: 可选，按 doc_genre.genre 过滤。
     """
     if not available(db_path):
         return []
@@ -405,6 +460,9 @@ def browse_doc_db(db_path, since=None, until=None, limit=12):
         if until is not None:
             where.append("mtime <= ?")
             params.append(until)
+        if genre:
+            where.append("doc_id IN (SELECT doc_id FROM doc_genre WHERE genre=?)")
+            params.append(genre)
         where_sql = " AND ".join(where)
         sql = (
             "WITH ranked AS ("
@@ -425,14 +483,15 @@ def browse_doc_db(db_path, since=None, until=None, limit=12):
 
 def domain_stats(db_path):
     if not available(db_path):
-        return {"available": False, "indexed": 0, "stored": 0, "files": 0, "uploaded": 0}
+        return {"available": False, "indexed": 0, "stored": 0, "files": 0, "uploaded": 0, "docs": 0}
     con = sqlite3.connect(db_path)
     try:
         con.execute("PRAGMA query_only=ON")
         up = con.execute("SELECT COUNT(*) FROM doc_source WHERE source_kind='upload'").fetchone()[0]
+        docs = con.execute("SELECT COUNT(DISTINCT doc_id) FROM doc_idx").fetchone()[0]
         return {"available": True, "indexed": int(_meta(con, "indexed_count", "0")),
                 "stored": int(_meta(con, "material_count", "0")),
-                "files": int(_meta(con, "files_count", "0")), "uploaded": up}
+                "files": int(_meta(con, "files_count", "0")), "uploaded": up, "docs": docs}
     finally:
         con.close()
 
@@ -466,18 +525,32 @@ def register_project(config_path, slug, label, source_root, db_path=None,
 
 def ensure_meta(con):
     con.execute("""CREATE TABLE IF NOT EXISTS feedback (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT, unit_id TEXT,
-        verdict TEXT, note TEXT, ts INTEGER)""")
+            id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT, unit_id TEXT,
+            verdict TEXT, note TEXT, ts INTEGER)""")
     con.execute("""CREATE TABLE IF NOT EXISTS errata (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT, unit_id TEXT,
-        note TEXT, status TEXT DEFAULT 'open', opened_ts INTEGER, resolved_ts INTEGER)""")
+            id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT, unit_id TEXT,
+            note TEXT, status TEXT DEFAULT 'open', opened_ts INTEGER, resolved_ts INTEGER)""")
     con.execute("""CREATE TABLE IF NOT EXISTS rank (
-        domain TEXT, unit_id TEXT, score REAL DEFAULT 0,
-        useful INTEGER DEFAULT 0, negative INTEGER DEFAULT 0, last_ts INTEGER,
-        PRIMARY KEY (domain, unit_id))""")
+            domain TEXT, unit_id TEXT, score REAL DEFAULT 0,
+            useful INTEGER DEFAULT 0, negative INTEGER DEFAULT 0, last_ts INTEGER,
+            PRIMARY KEY (domain, unit_id))""")
     con.execute("""CREATE TABLE IF NOT EXISTS gray_evict (
-        domain TEXT, unit_id TEXT, reason TEXT, evicted_ts INTEGER, status TEXT DEFAULT 'gray',
-        PRIMARY KEY (domain, unit_id))""")
+            domain TEXT, unit_id TEXT, reason TEXT, evicted_ts INTEGER, status TEXT DEFAULT 'gray',
+            PRIMARY KEY (domain, unit_id))""")
+    # v3: 收藏（跨库，不另建库；复用 meta.db）
+    con.execute("""CREATE TABLE IF NOT EXISTS favorite (
+            domain TEXT, unit_id TEXT, added_ts INTEGER,
+            PRIMARY KEY (domain, unit_id))""")
+    # v3: 库分组（Edge 收藏夹式管理多库）
+    con.execute("""CREATE TABLE IF NOT EXISTS library_folder (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            parent_id INTEGER,
+            created_ts INTEGER,
+            sort_order INTEGER DEFAULT 0)""")
+    con.execute("""CREATE TABLE IF NOT EXISTS library_folder_member (
+            folder_id INTEGER, library_slug TEXT,
+            PRIMARY KEY (folder_id, library_slug))""")
     con.commit()
 
 
@@ -812,6 +885,402 @@ def kb_size_info(db_paths):
             total += sz
             parts.append({"path": p.replace("\\", "/"), "bytes": sz, "mb": round(sz / 1048576, 2)})
     return {"total_bytes": total, "total_mb": round(total / 1048576, 2), "parts": parts}
+
+
+# ============ v3: genre ============
+
+def list_genres(db_path):
+    """列出库内所有 genre 及其 doc 数（按 doc 数倒序）。"""
+    if not available(db_path):
+        return []
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute("PRAGMA query_only=ON")
+        rows = con.execute(
+            "SELECT genre, COUNT(*) FROM doc_genre GROUP BY genre ORDER BY 2 DESC, 1"
+        ).fetchall()
+        return [{"genre": r[0] or "其他", "docs": r[1]} for r in rows]
+    finally:
+        con.close()
+
+
+def get_doc_genre(db_path, doc_id):
+    """取单个 doc 的 {genre, tags}；未找到返回 None。"""
+    if not available(db_path):
+        return None
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute("PRAGMA query_only=ON")
+        r = con.execute("SELECT genre, tags FROM doc_genre WHERE doc_id=?", (doc_id,)).fetchone()
+        return {"genre": r[0], "tags": r[1] or ""} if r else None
+    finally:
+        con.close()
+
+
+def get_genres_batch(db_path, doc_ids):
+    """批量取多个 doc_id 的 genre。返回 {doc_id: genre}。"""
+    if not available(db_path) or not doc_ids:
+        return {}
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute("PRAGMA query_only=ON")
+        placeholders = ",".join(["?"] * len(doc_ids))
+        rows = con.execute(
+            "SELECT doc_id, genre FROM doc_genre WHERE doc_id IN (" + placeholders + ")",
+            list(doc_ids)
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
+    finally:
+        con.close()
+
+
+# ============ v3: favorites ============
+
+def toggle_favorite(meta_db, domain, unit_id):
+    """切换收藏状态。返回 {is_favorite: bool}。"""
+    if not meta_db:
+        return {"is_favorite": False, "err": "meta_db 不可用"}
+    os.makedirs(os.path.dirname(meta_db) or ".", exist_ok=True)
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        existing = con.execute(
+            "SELECT 1 FROM favorite WHERE domain=? AND unit_id=?", (domain, unit_id)
+        ).fetchone()
+        if existing:
+            con.execute("DELETE FROM favorite WHERE domain=? AND unit_id=?", (domain, unit_id))
+            is_fav = False
+        else:
+            con.execute("INSERT INTO favorite(domain,unit_id,added_ts) VALUES (?,?,?)",
+                        (domain, unit_id, int(time.time() * 1000)))
+            is_fav = True
+        con.commit()
+        return {"is_favorite": is_fav}
+    finally:
+        con.close()
+
+
+def list_favorites(meta_db, domain_filter=None):
+    """列出全部收藏（或按域过滤）。返回 [{domain, unit_id, added_ts}, ...]。"""
+    if not meta_db or not available(meta_db):
+        return []
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        if domain_filter:
+            rows = con.execute(
+                "SELECT domain, unit_id, added_ts FROM favorite WHERE domain=? ORDER BY added_ts DESC",
+                (domain_filter,)
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT domain, unit_id, added_ts FROM favorite ORDER BY added_ts DESC"
+            ).fetchall()
+        return [{"domain": r[0], "unit_id": r[1], "added_ts": r[2]} for r in rows]
+    finally:
+        con.close()
+
+
+def is_favorites_batch(meta_db, pairs):
+    """批量查询哪些 (domain, unit_id) 已收藏。pairs 是 iterable of (domain, unit_id)。
+    返回 set of (domain, unit_id) tuples。"""
+    if not meta_db or not available(meta_db) or not pairs:
+        return set()
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        result = set()
+        # 一次查全部，再 Python filter
+        rows = con.execute("SELECT domain, unit_id FROM favorite").fetchall()
+        all_favs = {(r[0], r[1]) for r in rows}
+        for p in pairs:
+            if p in all_favs:
+                result.add(p)
+        return result
+    finally:
+        con.close()
+
+
+# ============ v3: library management ============
+
+def register_library(config_path, slug, label, source_root, description="", tags=None,
+                     icon="", db_path=None, index_globs=None, store_only_globs=None,
+                     exclude_globs=None):
+    """v3 扩展：登记一个新库到 config.json projects[]，含元信息（description/tags/icon）。
+    兼容老 register_project（向后兼容）。"""
+    cfg = {}
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    projects = cfg.get("projects", [])
+    # 去重 by slug
+    projects = [p for p in projects if p.get("slug") != slug]
+    entry = {
+        "slug": slug,
+        "label": label,
+        "description": description or "",
+        "tags": tags or [],
+        "icon": icon or "",
+        "db_path": db_path or ("E:/知识库/projects/" + slug + ".db"),
+        "source_root": source_root.replace("\\", "/"),
+        "source_glob": "**/*.md",
+        "index_globs": index_globs or ["**/*.md"],
+        "store_only_globs": store_only_globs or [],
+        "exclude_globs": exclude_globs or [],
+        "enabled": True,
+    }
+    projects.append(entry)
+    cfg["projects"] = projects
+    # 备份原 config（防意外）
+    if os.path.exists(config_path):
+        bak = config_path + ".bak"
+        try:
+            import shutil
+            shutil.copy2(config_path, bak)
+        except Exception:
+            pass
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    return entry
+
+
+def update_library(config_path, slug, **fields):
+    """更新库元信息（label/description/tags/icon 等任意字段）。"""
+    cfg = {}
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    projects = cfg.get("projects", [])
+    updated = None
+    for p in projects:
+        if p.get("slug") == slug:
+            for k, v in fields.items():
+                if v is not None:
+                    p[k] = v
+            updated = p
+            break
+    if updated:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    return updated
+
+
+def delete_library(config_path, slug, keep_db=True):
+    """从 config 移除库。keep_db=True 时保留 db 文件（防误删）。"""
+    cfg = {}
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    projects = cfg.get("projects", [])
+    removed = next((p for p in projects if p.get("slug") == slug), None)
+    cfg["projects"] = [p for p in projects if p.get("slug") != slug]
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    db_deleted = False
+    if removed and not keep_db:
+        db_p = removed.get("db_path")
+        if db_p and os.path.exists(db_p):
+            try:
+                os.remove(db_p)
+                db_deleted = True
+            except Exception:
+                pass
+    return {"removed": removed, "db_deleted": db_deleted}
+
+
+# ============ v3: library folders (Edge-style) ============
+
+def create_folder(meta_db, name, parent_id=None):
+    """创建一个库分组（可嵌套）。返回 {id, name, parent_id}。"""
+    if not meta_db:
+        return {"err": "meta_db 不可用"}
+    os.makedirs(os.path.dirname(meta_db) or ".", exist_ok=True)
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        cur = con.execute(
+            "INSERT INTO library_folder(name, parent_id, created_ts, sort_order) VALUES (?,?,?,0)",
+            (name, parent_id, int(time.time() * 1000))
+        )
+        con.commit()
+        return {"id": cur.lastrowid, "name": name, "parent_id": parent_id}
+    finally:
+        con.close()
+
+
+def list_folders(meta_db):
+    """列出全部分组及成员。返回 {folders: [...], unassigned: [slug, ...]}。"""
+    if not meta_db or not available(meta_db):
+        return {"folders": [], "unassigned": []}
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        folders = con.execute(
+            "SELECT id, name, parent_id, sort_order FROM library_folder ORDER BY sort_order, id"
+        ).fetchall()
+        members = con.execute(
+            "SELECT folder_id, library_slug FROM library_folder_member"
+        ).fetchall()
+        # 按文件夹聚合
+        member_map = {}
+        for folder_id, slug in members:
+            member_map.setdefault(folder_id, []).append(slug)
+        return {
+            "folders": [
+                {"id": f[0], "name": f[1], "parent_id": f[2], "sort_order": f[3],
+                 "members": member_map.get(f[0], [])}
+                for f in folders
+            ],
+            # unassigned 由调用方对照 config 得出（meta.db 不知道有哪些库）
+        }
+    finally:
+        con.close()
+
+
+def add_folder_member(meta_db, folder_id, library_slug):
+    """把库加入分组。"""
+    if not meta_db:
+        return {"err": "meta_db 不可用"}
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        con.execute(
+            "INSERT OR IGNORE INTO library_folder_member(folder_id, library_slug) VALUES (?,?)",
+            (folder_id, library_slug)
+        )
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+def remove_folder_member(meta_db, folder_id, library_slug):
+    """把库移出分组。"""
+    if not meta_db:
+        return {"err": "meta_db 不可用"}
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        con.execute(
+            "DELETE FROM library_folder_member WHERE folder_id=? AND library_slug=?",
+            (folder_id, library_slug)
+        )
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+def delete_folder(meta_db, folder_id):
+    """删除分组（含成员关系；不删库本身）。"""
+    if not meta_db:
+        return {"err": "meta_db 不可用"}
+    con = sqlite3.connect(meta_db)
+    try:
+        ensure_meta(con)
+        con.execute("DELETE FROM library_folder_member WHERE folder_id=?", (folder_id,))
+        con.execute("DELETE FROM library_folder WHERE id=?", (folder_id,))
+        # 把子文件夹的 parent_id 置空（避免悬空引用）
+        con.execute("UPDATE library_folder SET parent_id=NULL WHERE parent_id=?", (folder_id,))
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+# ============ v3: siblings ============
+
+_MD_IMG_RE = re.compile(r'!\[[^\]]*\]\(([^)\s]+)')
+
+
+def list_siblings(db_path, doc_id, source_root=None, max_refs=20):
+    """列出一个 doc 的关联文件：
+    - same_folder: 同父目录（如同一周容器）的其他已索引 doc
+    - referenced_images: doc 正文里 ![](path) 引用的图片文件（绝对或相对路径）
+
+    返回 {same_folder: [...], referenced_images: [...], week_mate: [...]}。
+    week_mate 是更宽泛的"同周容器"匹配（YYYYMMDD-MMDD 前缀）。
+    """
+    if not available(db_path):
+        return {"same_folder": [], "referenced_images": [], "week_mate": []}
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute("PRAGMA query_only=ON")
+        # 1. 取 doc 的 file_path
+        r = con.execute(
+            "SELECT file_path FROM doc_idx WHERE doc_id=? LIMIT 1", (doc_id,)
+        ).fetchone()
+        if not r:
+            return {"same_folder": [], "referenced_images": [], "week_mate": []}
+        file_path = (r[0] or "").replace("\\", "/")
+        # 2. 同父目录的其他 doc（按 doc_id 去重）
+        parent = file_path.rsplit("/", 1)[0] if "/" in file_path else ""
+        same_folder = []
+        if parent:
+            rows = con.execute(
+                "SELECT DISTINCT doc_id, file_path, file_title FROM doc_idx "
+                "WHERE file_path LIKE ? AND doc_id != ? LIMIT 50",
+                (parent + "/%", doc_id)
+            ).fetchall()
+            same_folder = [{"doc_id": r[0], "file_path": r[1], "title": r[2]} for r in rows]
+        # 3. 同周容器（YYYYMMDD-MMDD 前缀）
+        week_mate = []
+        m = re.match(r'^.*?(\d{8}-\d{4})/', file_path)
+        if m:
+            week_prefix = m.group(1)
+            rows = con.execute(
+                "SELECT DISTINCT doc_id, file_path, file_title FROM doc_idx "
+                "WHERE file_path LIKE ? AND doc_id != ? LIMIT 50",
+                ("%" + week_prefix + "/%", doc_id)
+            ).fetchall()
+            # 排除已在 same_folder 里的
+            same_ids = {s["doc_id"] for s in same_folder}
+            week_mate = [{"doc_id": r[0], "file_path": r[1], "title": r[2]}
+                         for r in rows if r[0] not in same_ids]
+        # 4. 解析正文图片引用
+        text_rows = con.execute(
+            "SELECT text_orig FROM doc_idx WHERE doc_id=?", (doc_id,)
+        ).fetchall()
+        full_text = "\n".join(t[0] for t in text_rows)
+        img_refs = []
+        seen_refs = set()
+        for match in _MD_IMG_RE.finditer(full_text):
+            ref = match.group(1)
+            if ref in seen_refs or ref.startswith("http://") or ref.startswith("https://"):
+                continue
+            seen_refs.add(ref)
+            img_refs.append(ref)
+            if len(img_refs) >= max_refs:
+                break
+        # 解析为相对 source_root 的可下载路径
+        referenced_images = []
+        if source_root and img_refs:
+            # 图片相对路径是相对 md 文件所在目录
+            md_dir = parent if parent else ""
+            for ref in img_refs:
+                # 规范化：去掉 ./ 和 ../
+                clean = ref.lstrip("./")
+                if not clean:
+                    continue
+                # 解析为相对 source_root 的路径
+                if md_dir:
+                    candidate_rel = (md_dir + "/" + clean).replace("\\", "/")
+                else:
+                    candidate_rel = clean
+                # 简化处理：去除 ./，标准化（不做完整 path resolution）
+                candidate_rel = re.sub(r'/+', '/', candidate_rel)
+                abs_check = os.path.join(source_root, candidate_rel.replace("/", os.sep))
+                if os.path.exists(abs_check):
+                    referenced_images.append({"ref": ref, "resolved_path": candidate_rel})
+                else:
+                    # 也试一下直接当 source_root 下路径
+                    abs_check2 = os.path.join(source_root, clean.replace("/", os.sep))
+                    if os.path.exists(abs_check2):
+                        referenced_images.append({"ref": ref, "resolved_path": clean})
+        return {"same_folder": same_folder, "referenced_images": referenced_images,
+                "week_mate": week_mate}
+    finally:
+        con.close()
 
 
 def _cli():
