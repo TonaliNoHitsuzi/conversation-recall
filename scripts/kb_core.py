@@ -1298,6 +1298,8 @@ def _cli():
     sp.add_argument("--md-file", required=True, help="要入库的 md 文件（非 md 请先用 tool-doc2md 转换）")
     sp.add_argument("--source", help="原始文件路径（溯源用，默认同 md-file）")
     sp.add_argument("--title", help="文档标题（默认从 frontmatter/H1 推断）")
+    sp.add_argument("--genre", help="v3：自定义 genre（不传则按 source 路径自动推断）")
+    sp.add_argument("--tags", help="v3：自定义标签（逗号分隔）")
 
     sp = sub.add_parser("build-project", help="folder 批量同步一个项目文件夹到一个库")
     sp.add_argument("--db", required=True)
@@ -1357,8 +1359,9 @@ def _cli():
     args = ap.parse_args()
     if args.cmd == "ingest":
         md = open(args.md_file, encoding="utf-8", errors="replace").read()
-        r = ingest_file(args.db, args.domain, md, source_path=args.source or args.md_file, title=args.title)
-        print("已上传：doc_id={doc_id}  sections={sections}  title={title}".format(**r))
+        r = ingest_file(args.db, args.domain, md, source_path=args.source or args.md_file,
+                        title=args.title, genre=args.genre, tags=args.tags)
+        print("已上传：doc_id={doc_id}  sections={sections}  title={title}  genre={genre}".format(**r))
     elif args.cmd == "build-project":
         cfg = {"db_path": args.db, "domain": args.domain, "source_root": args.source_root,
                "source_glob": args.source_glob, "index_globs": _split_globs(args.index_globs),

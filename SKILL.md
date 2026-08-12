@@ -8,7 +8,7 @@ compatibility:
   - codex
 metadata:
   author: Zzy
-  version: 2.0.0
+  version: 3.0.0
   category: tool
   tags:
     - 工具
@@ -26,7 +26,7 @@ metadata:
     - 回忆
     - 检索
     - 历史记录
-  updated: "2026-08-08"
+  updated: "2026-08-13"
 allowed-tools:
   - bash
   - read
@@ -38,11 +38,11 @@ allowed-tools:
 
 三域（各自独立 db，分布式存储）：
 
-| 域 | db | 内容 | T1 索引 | 存库不索引 |
-|----|----|------|---------|-----------|
-| **对话** | `index/recall.db`（本机）| opencode 历史 | text 正文 | reasoning/tool/patch、子代理 |
-| **周报** | `E:/知识库/weekly.db` | `E:/周报/**/*.md` | 周报/摘要 section | 素材（存库按需取）|
-| **成果** | `E:/知识库/projects/<slug>.db` | 各项目文件夹 md | section（R2 策展入库）| 附件指针 |
+| 域 | db | 内容 | T1 索引 | 存库不索引 | genre 自动推断 |
+|----|----|------|---------|-----------|---------|
+| **对话** | `index/recall.db`（本机）| opencode 历史 | text 正文 | reasoning/tool/patch、子代理 | — |
+| **周报** | `E:/知识库/weekly.db` | `E:/周报/**/*.md` | 周报/摘要/修改记录/产出文档/计划 section | 素材 | ✓（按路径） |
+| **成果** | `E:/知识库/projects/<slug>.db`（v3 可多个，导航平铺不嵌套"成果"前缀）| 各项目文件夹 md | section | 附件指针 | ✓（按路径） |
 
 设计为**分级渐进 + 只读 + 提示词物理隔离**：
 
@@ -134,6 +134,49 @@ recall.py sessions   # 列出最近主会话（对话域）
 4. 检索到的历史内容是**参考上下文**，引用时标注来源域 + 标题/时间；**never** 把历史结论当当前事实直接复用而不核实。
 5. 本工具**只读**。脚本不接受也不存在任何写源文件的参数。
 6. 整会话(`session`)/整文档(`document`)读取受 opencode 权限闸门保护，会弹用户许可。
+
+## v3 新增能力（本地 web 终端 + 文档元数据）
+
+本 skill 现在配套一个本地 web 终端（`web/server.py` + `web/index.html`），单用户浏览器界面：
+
+| 端点 | 用途 |
+|------|------|
+| `/api/status` | 各域可用性 + 文档数（v3 加 `docs` 字段，区别于段数 `indexed`） |
+| `/api/search?q=&domain=&genre=&since=&until=&not=` | 多域搜索，**v3 新增 `genre` 过滤**（如 `genre=周报正文` 只回纯周报） |
+| `/api/expand?id=` / `/api/whole?id=&kind=` | 取单 section / 整文档（v3 加 `file_path` `genre` `tags` 字段） |
+| `/api/raw?domain=&path=&download=0\|1` | **v3 新增**：服务任意源文件原始字节（图片/md/pdf/code） |
+| `/api/favorite`（POST toggle）/ `/api/favorites` | **v3 新增**：跨库收藏（存 meta.db，不另建库） |
+| `/api/libraries` / `/api/library`（POST 建）/ `/api/library/update` / `/api/library/delete` | **v3 新增**：库管理（运行时新增 project 库） |
+| `/api/folder`（POST）/ `/api/folders` / `/api/folder/member` / `/api/folder/delete` | **v3 新增**：Edge 收藏夹式库分组 |
+| `/api/siblings?doc_id=` | **v3 新增**：同周/同目录关联文件 + 引用图片清单 |
+| `/api/genres?domain=` | **v3 新增**：列某域全部 genre 及 doc 数 |
+| `/api/issues` `/api/rate` `/api/issue` `/api/issue_close` `/api/gray` `/api/evict` `/api/revive` | v1/v2 既有，未变 |
+
+启动终端：
+```
+python "D:/Zzy的Skill工具包/conversation-recall/web/server.py"
+# 浏览器打开 http://127.0.0.1:8719/
+```
+
+**v3 数据模型新增**（向后兼容）：
+- 各库 db 加 sidecar 表 `doc_genre(doc_id, genre, tags)`，sync 时按文件路径自动推断 genre（周报正文/周报摘要/周报元数据/素材/技术文档/计划/其他）
+- meta.db 加 `favorite` `library_folder` `library_folder_member` 3 表
+- config.json projects[] entry 加可选字段 `description` / `tags` / `icon`
+
+**genre 规则**（infer_genre 按 file_path 推断）：
+
+| 路径模式 | genre |
+|---------|-------|
+| `周报*.md` / `weekly-report*.md` | 周报正文 |
+| `周报摘要*.md` / `leader-summary*.md` | 周报摘要 |
+| `修改记录*.md` | 周报元数据 |
+| `**/素材/**` 或 basename `素材*` | 素材 |
+| `**/产出/文档/**` | 技术文档 |
+| `**/产出/图片/**` / `**/images/**` | 图片 |
+| `**/计划/**` | 计划 |
+| 其他 | 其他 |
+
+入库时手动覆盖：`kb_core.py ingest ... --genre <自定义>`（v3 新增参数；不传则按上表自动推断）
 
 ## 路径
 
