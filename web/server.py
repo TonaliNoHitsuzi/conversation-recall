@@ -300,6 +300,7 @@ def _doc_section(dcfg, section_id):
     g = kb_core.get_doc_genre(dcfg["db_path"], doc_id) or {}
     return {"domain": dcfg["domain"], "unit_id": doc_id, "title": file_title or doc_id,
             "heading": heading, "md": text,
+            "file_path": file_path,
             "multimodal_url": _fm_url(dcfg, file_path),
             "genre": g.get("genre", ""), "tags": g.get("tags", "")}
 
@@ -310,8 +311,10 @@ def _doc_whole(dcfg, doc_id):
         return None
     md = "\n\n".join("### {0}\n\n{1}".format(h, t) for h, t in blocks)
     g = kb_core.get_doc_genre(dcfg["db_path"], doc_id) or {}
+    fp = _doc_file_path(dcfg["db_path"], doc_id)
     return {"domain": dcfg["domain"], "unit_id": doc_id, "title": title, "md": md,
-            "multimodal_url": _fm_url(dcfg, _doc_file_path(dcfg["db_path"], doc_id)),
+            "file_path": fp or "",
+            "multimodal_url": _fm_url(dcfg, fp),
             "genre": g.get("genre", ""), "tags": g.get("tags", "")}
 
 
