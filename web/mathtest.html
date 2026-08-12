@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>MathJax 最小测试</title>
+<script>window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']],processEscapes:true,processEnvironments:true,packages:{'[+]':['ams','cases','mathtools','physics','noerrors','noundefined']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code'],fontURL:'https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/js/output/chtml/fonts/tex-woff-v2'}};</script>
+<script src="assets/mathjax-tex-mml-chtml.js"></script>
+<style>
+body{font-family:sans-serif;max-width:800px;margin:40px auto;padding:0 20px}
+pre{background:#f4f4f4;padding:12px;border-radius:6px;overflow:auto}
+table{border-collapse:collapse}td{border:1px solid #ccc;padding:6px 12px}
+</style>
+</head>
+<body>
+<h1>MathJax 最小测试</h1>
+
+<h2>1. 行内公式</h2>
+<p>扩展不确定度按 $U = k \cdot u_c$ 给出，其中 $k=2$。</p>
+
+<h2>2. 块公式</h2>
+<p>$$ u_c = \sqrt{u_{\mathrm{std}}^2 + u_{\mathrm{bath}}^2 + u_{\mathrm{drift}}^2} = 15\,\mathrm{mK} $$</p>
+
+<h2>3. 矩阵</h2>
+<p>$$ A = \begin{bmatrix} 1 & 2 & 3 \\ 4 & 5 & 6 \\ 7 & 8 & 9 \end{bmatrix}, \quad \det(A) = 0 $$</p>
+
+<h2>4. 各种符号</h2>
+<p>$\alpha + \beta = \gamma$，$\sum_{i=1}^n i = \frac{n(n+1)}{2}$，$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$</p>
+
+<hr>
+<p>打开 F12 控制台看 MathJax 加载日志。如果以上公式都正确渲染，说明本地 MathJax 没问题，bug 在 v3 主页面的渲染管线里。如果也都乱码，说明 MathJax 字体加载失败。</p>
+
+<script>
+window.addEventListener('load', function(){
+  setTimeout(function(){
+    if(window.MathJax && MathJax.startup){
+      MathJax.startup.promise.then(function(){
+        console.log('MathJax ready, typeset done');
+        var stats = {mjxContainers: document.querySelectorAll('mjx-container').length};
+        console.log('mjx-container count:', stats.mjxContainers);
+      }).catch(function(e){ console.error('MathJax error:', e); });
+    } else {
+      console.error('MathJax not loaded');
+    }
+  }, 1500);
+});
+</script>
+</body>
+</html>

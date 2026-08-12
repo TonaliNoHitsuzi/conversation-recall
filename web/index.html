@@ -498,7 +498,7 @@ details.adv .adv-body{padding:8px 0 0}
 <div id="toastRoot"></div>
 <div id="modalRoot"></div>
 
-<script>window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']],packages:{'[+]':['ams','cases','mathtools','physics']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code']},startup:{typeset:false}};</script>
+<script>window.MathJax = {tex:{inlineMath:[['$','$'],['\\(','\\)']],displayMath:[['$$','$$'],['\\[','\\]']],processEscapes:true,processEnvironments:true,packages:{'[+]':['ams','cases','mathtools','physics','noerrors','noundefined']}},svg:{fontCache:'global'},options:{skipHtmlTags:['script','noscript','style','textarea','pre','code'],fontURL:'https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/js/output/chtml/fonts/tex-woff-v2'}};</script>
 <script src="assets/marked.min.js"></script>
 <script src="assets/highlight.min.js"></script>
 <script src="assets/mermaid.min.js"></script>
@@ -953,8 +953,16 @@ async function _renderMdAsync(mdText, el){
     /* mermaid 全部渲染完，再补加 mermaid 工具按钮（mermaid run 把 div innerHTML 替换为 SVG 时会清掉按钮） */
     addMermaidTools(el);
   }
-  /* MathJax：数学占位已还原，typeset 触发渲染 */
-  if(window.MathJax && MathJax.typesetPromise){ try{ await MathJax.typesetPromise([el]); }catch(e){} }
+  /* MathJax：数学占位已还原，等 MathJax startup 就绪后 typesetClear + typeset */
+  if(window.MathJax){
+    try{
+      const ready = (MathJax.startup && MathJax.startup.promise) ? MathJax.startup.promise : Promise.resolve();
+      ready.then(function(){
+        try{ if(MathJax.typesetClear) MathJax.typesetClear([el]); }catch(e){}
+        try{ return MathJax.typesetPromise([el]); }catch(e){}
+      }).catch(function(){});
+    }catch(e){}
+  }
 }
 function wrapImg(im, rawUrl){
   const wrap = document.createElement('span');
@@ -1018,21 +1026,13 @@ function addBlockTools(el){
     });
     pre.appendChild(tools);
   });
-  /* 表格：复制为 HTML（富文本粘贴）/ 下载 */
+  /* 表格：仅复制（HTML 富文本粘贴），不要下载按钮 */
   el.querySelectorAll('.table-wrap.codeblock').forEach(function(wrap){
     if(wrap.querySelector('.block-tools')) return;
     const tools = document.createElement('div');
     tools.className = 'block-tools';
-    tools.innerHTML =
-      '<button class="tbtn" data-act="copy">'+icon('copy')+'复制 HTML</button>'+
-      '<button class="tbtn" data-act="dl">'+icon('download')+'</button>';
+    tools.innerHTML = '<button class="tbtn" data-act="copy">'+icon('copy')+'复制 HTML</button>';
     tools.querySelector('[data-act="copy"]').addEventListener('click', ()=>copyText(wrap.dataset.src || wrap.textContent, '表格 HTML 已复制'));
-    tools.querySelector('[data-act="dl"]').addEventListener('click', ()=>{
-      const blob = new Blob([wrap.dataset.src || wrap.textContent], {type:'text/html'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob); a.download = 'table.html'; a.click();
-      setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
-    });
     wrap.appendChild(tools);
   });
   /* mermaid：复制源码 + 导出（注意：在 mermaid.run 完成后由 addMermaidTools 单独调用，
