@@ -19,6 +19,9 @@ web/logs/
 # ── 开发自检表单（过程文档，不随发布）──
 dev_log/
 
+# ── 临时备份（v1 跑稳后清理）──
+web/*.bak.html
+
 # ── OS ──
 .DS_Store
 Thumbs.db

@@ -388,15 +388,16 @@ def list_materials(db_path, limit=100):
 
 
 def browse_doc_db(db_path, since=None, until=None, limit=12):
-    """无关键词浏览：按 mtime 倒序取最近的 section（dedup by doc_id）。"""
+    """无关键词浏览：每个 doc_id 只取一条最新 section，按 mtime 倒序取 limit 个 doc。
+
+    dedup 下沉到 SQL（window function），避免「先 LIMIT 再 dedup」时被高频 doc 占满配额。
+    """
     if not available(db_path):
         return []
     con = sqlite3.connect(db_path)
     try:
         con.execute("PRAGMA query_only=ON")
-        sql = ("SELECT section_id,doc_id,domain,file_path,file_title,heading_path,level,text_orig,mtime "
-               "FROM doc_idx")
-        where = []
+        where = ["1=1"]
         params = []
         if since is not None:
             where.append("mtime >= ?")
@@ -404,23 +405,20 @@ def browse_doc_db(db_path, since=None, until=None, limit=12):
         if until is not None:
             where.append("mtime <= ?")
             params.append(until)
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY mtime DESC LIMIT ?"
-        params.append(limit * 3)
+        where_sql = " AND ".join(where)
+        sql = (
+            "WITH ranked AS ("
+            " SELECT section_id,doc_id,domain,file_path,file_title,heading_path,level,text_orig,mtime,"
+            "        ROW_NUMBER() OVER (PARTITION BY doc_id ORDER BY mtime DESC, section_id) AS rn"
+            " FROM doc_idx WHERE " + where_sql +
+            ") SELECT section_id,doc_id,domain,file_path,file_title,heading_path,level,text_orig,mtime"
+            " FROM ranked WHERE rn=1 ORDER BY mtime DESC LIMIT ?"
+        )
+        params.append(limit)
         rows = con.execute(sql, params).fetchall()
-        seen = set()
-        hits = []
-        for r in rows:
-            if r[1] in seen:
-                continue
-            seen.add(r[1])
-            hits.append({"section_id": r[0], "doc_id": r[1], "domain": r[2], "file_path": r[3],
-                         "file_title": r[4], "heading": r[5], "level": r[6], "text": r[7],
-                         "matched": ["(浏览)"]})
-            if len(hits) >= limit:
-                break
-        return hits
+        return [{"section_id": r[0], "doc_id": r[1], "domain": r[2], "file_path": r[3],
+                 "file_title": r[4], "heading": r[5], "level": r[6], "text": r[7],
+                 "matched": ["(浏览)"]} for r in rows]
     finally:
         con.close()
 

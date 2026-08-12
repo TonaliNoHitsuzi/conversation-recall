@@ -530,10 +530,11 @@ def _parse_time(s, end=False):
 
 
 def _conv_browse(idx, since, until, limit):
-    """无关键词浏览对话域：按 time_created 倒序，dedup by session。"""
-    sql = ("SELECT part_id,session_id,session_title,directory,role,time_created,text_orig "
-           "FROM text_idx")
-    where = []
+    """无关键词浏览对话域：每个 session_id 只取一条最新 part，按 time_created 倒序取 limit 个 session。
+
+    dedup 下沉到 SQL（window function），避免「先 LIMIT 再 dedup」时被高频 session 占满配额。
+    """
+    where = ["1=1"]
     params = []
     if since is not None:
         where.append("time_created >= ?")
@@ -541,22 +542,20 @@ def _conv_browse(idx, since, until, limit):
     if until is not None:
         where.append("time_created <= ?")
         params.append(until)
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY time_created DESC LIMIT ?"
-    params.append(limit * 3)
+    where_sql = " AND ".join(where)
+    sql = (
+        "WITH ranked AS ("
+        " SELECT part_id,session_id,session_title,directory,role,time_created,text_orig,"
+        "        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY time_created DESC, part_id) AS rn"
+        " FROM text_idx WHERE " + where_sql +
+        ") SELECT part_id,session_id,session_title,directory,role,time_created,text_orig"
+        " FROM ranked WHERE rn=1 ORDER BY time_created DESC LIMIT ?"
+    )
+    params.append(limit)
     rows = idx.execute(sql, params).fetchall()
-    seen = set()
-    hits = []
-    for pid, sid, title, directory, role, tc, text in rows:
-        if sid in seen:
-            continue
-        seen.add(sid)
-        hits.append({"ref": pid, "sid": sid, "title": title, "directory": directory,
-                     "role": role, "tc": tc, "text": text, "matched": ["(浏览)"], "best": 0})
-        if len(hits) >= limit:
-            break
-    return hits
+    return [{"ref": pid, "sid": sid, "title": title, "directory": directory,
+             "role": role, "tc": tc, "text": text, "matched": ["(浏览)"], "best": 0}
+            for pid, sid, title, directory, role, tc, text in rows]
 
 
 def cmd_search(args, idx, ro):
