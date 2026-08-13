@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""conversation-recall —— 三域分布式知识检索（分级渐进）。
+"""conversation-recall —— 多域分布式知识检索（分级渐进）。
 
-三域（分布式存储，各自独立 db）：
+多域（分布式存储，各自独立 db）：
   - 对话域 conversation.db（本机 D盘，源：opencode.db，只读三重保险）
   - 周报域 E:/知识库/weekly.db（源：E:/周报/**/*.md，索引周报/摘要，素材存库不索引）
   - 成果域 E:/知识库/projects/<slug>.db（每项目一库，R2 策展入库填充）
@@ -622,7 +622,7 @@ def cmd_search(args, idx, ro):
 
     terms = _all_terms(queries)
     total_hits = 0
-    print("═══ 三域并行检索（T1·{0} 个词{1}）═══".format(len(queries), tnote))
+    print("═══ 多域并行检索（T1·{0} 个词{1}）═══".format(len(queries), tnote))
 
     if _want_domain(domfilter, "conversation", "conversation", "对话") and CONFIG["conversation"]["enabled"]:
         hits, counts = _conv_search(idx, queries, args.role, args.sid, args.limit, since=since, until=until, negatives=negatives)
@@ -1007,10 +1007,10 @@ def cmd_feedback(args, idx, ro):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(prog="recall.py", description="三域分布式知识检索（分级渐进）")
+    p = argparse.ArgumentParser(prog="recall.py", description="多域分布式知识检索（分级渐进）")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("search", help="T1 多词并行检索（三域）")
+    sp = sub.add_parser("search", help="T1 多词并行检索（多域）")
     sp.add_argument("queries", nargs="*", help="查询词（建议联想 10+ 个；留空 + 时间过滤 = 浏览模式）")
     sp.add_argument("--role", help="对话域筛选角色：user/assistant")
     sp.add_argument("--sid", help="对话域限定会话 id")

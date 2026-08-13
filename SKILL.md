@@ -74,7 +74,7 @@ allowed-tools:
 python "D:/Zzy的Skill工具包/conversation-recall/scripts/recall.py" search "词1" "词2" ... "词10" [--domain 对话|周报|成果|all] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--not "排除词"] [--limit N]
 ```
 
-- 多词并行（每词每域独立 FTS5），跨域结果**分域展示**并标注来源（`[对话]`/`[周报]`/`[成果·slug]`），共识度越高越靠前。
+- 多词并行（每词每域独立 FTS5），跨域结果**分域展示**并标注来源（`[对话]`/`[周报]`/`[<项目名>]`），共识度越高越靠前。
 - `search` 会先自动增量同步所有可用域（秒级）；E 盘离线的域会显示"⚠ 数据库不可用，已跳过"。
 - `--domain` 可限定单域（默认 all）。
 - `--since`/`--until`：时间过滤（YYYY-MM-DD 或毫秒），按内容时间筛（对话=part创建时间，文档=文件mtime）。如"只看上个月的""2026-06-01 以来的"。
