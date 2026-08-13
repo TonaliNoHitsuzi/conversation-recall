@@ -163,6 +163,10 @@ def load_config():
         "db_path": _resolve(conv.get("db_path") or "index/recall.db"),
         "enabled": conv.get("enabled", True),
     }
+    # v3: opencode session db 路径可由 config 覆盖；否则用默认 ~/.local/share/opencode/opencode.db
+    global OPENCODE_DB
+    if conv.get("opencode_db_path"):
+        OPENCODE_DB = _resolve(conv.get("opencode_db_path"))
     doc_domains = []
     wk = domains.get("weekly", {})
     if wk:

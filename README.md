@@ -167,6 +167,23 @@ cp config.example.json config.json    # Windows: copy config.example.json config
 - **开箱即用**：conversation 域默认开启，只需 opencode 历史即可工作。
 - **启用周报/成果域**：把对应块的 `enabled` 改 `true`，`source_root` 指向你的目录，`db_path` 放任意位置（相对路径以本目录为根）。
 
+#### v3 新增可配字段
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `server.port` | 8719 | web 终端端口（CLI `--port` 优先级最高） |
+| `defaults.projects_default_dir` | `data/projects/` | 通过 web 终端新建项目库时的默认 db 目录 |
+| `domains.conversation.opencode_db_path` | `~/.local/share/opencode/opencode.db` | opencode session db 路径，自机安装位置不同时覆盖 |
+
+#### 自机部署 checklist（给其他想用的人）
+
+1. **opencode 路径**：默认 `~/.local/share/opencode/opencode.db`。Windows 上 `~` 会展开为 `C:/Users/<用户名>`。若你的 opencode 装别处（如 Scoop/Chocolatey 改了数据目录），在 `conversation.opencode_db_path` 里指明。
+2. **db 目录**：所有 `db_path` 都可用相对路径（以 `config.json` 所在目录为根，eg. `"data/weekly.db"`）。不想用 `E:/知识库/` 这种绝对路径的话，全部改成 `data/...`，gitignored 不会泄露。
+3. **数学公式字体**：`web/index.html` 第 ~528 行 MathJax 配置硬编码了 jsdelivr CDN 的字体路径 `https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/output/chtml/fonts/woff-v2`。完全离线部署时需把这个 URL 换成本地路径或自托管 CDN。
+4. **目录浏览器**：web 终端的「📁 浏览」按钮调 PowerShell `FolderBrowserDialog`，仅 Windows 可用。非 Windows 用户需直接手输绝对路径到「源目录」字段。
+5. **端口冲突**：8719 被占时改 `server.port` 或加 CLI `--port`。
+6. **代理**：从中国境内 push 到 GitHub 需配 git 代理：`git config --global http.proxy http://127.0.0.1:7897`（按你的代理端口改）。
+
 ### 3. 首次检索
 
 ```bash

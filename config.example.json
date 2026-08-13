@@ -2,12 +2,23 @@
   "version": 1,
   "_comment": "三域分布式知识体系配置。复制本文件为 config.json 后按本机环境修改。db_path 相对路径以本文件所在目录(conversation-recall/)为根；绝对路径(如 E:/...)也支持。conversation 域默认开启(只需 opencode 历史)；weekly/projects/gray/meta 按需启用。",
 
+  "server": {
+    "port": 8719,
+    "_comment": "v3: web 终端端口。CLI --port 优先级最高，其次本字段，再 fallback 8719"
+  },
+
+  "defaults": {
+    "projects_default_dir": "data/projects",
+    "_comment": "v3: 通过 web 终端 / register_library 新建项目库时的默认 db 目录。相对路径以 config.json 为根；缺失则 fallback 到 <conversation-recall>/data/projects/"
+  },
+
   "domains": {
     "conversation": {
       "kind": "conversation",
       "db_path": "index/recall.db",
       "enabled": true,
-      "_comment_opencode_db": "对话域从 opencode 自带的 session db 抽取，路径由脚本自动探测；如需覆盖，加 \"opencode_db_path\": \"...\""
+      "opencode_db_path": "~/.local/share/opencode/opencode.db",
+      "_comment_opencode_db": "v3: opencode session db 路径可覆盖。默认 ~/.local/share/opencode/opencode.db（Linux/Mac 标准位置，Windows 上 ~ 展开）。若你的 opencode 装在别处，改这里"
     },
 
     "weekly": {
@@ -28,6 +39,7 @@
       "store_only_globs": [
         "素材*.md"
       ],
+      "exclude_globs": [],
       "enabled": false,
       "_comment_enable": "改为 true 启用；把 source_root 指向你的周报目录"
     }
@@ -38,6 +50,9 @@
       "_comment_template": "成果域样例。复制本块改 slug/source_root 后加入数组。db_path 建议放 data/projects/<slug>.db。",
       "slug": "my-project",
       "label": "我的项目",
+      "description": "",
+      "tags": [],
+      "icon": "📁",
       "db_path": "data/projects/my-project.db",
       "source_root": "D:/path/to/your/project/docs",
       "source_glob": "**/*.md",
@@ -56,7 +71,7 @@
 
   "meta": {
     "db_path": "data/meta.db",
-    "_comment": "rank/反馈/勘误/审计日志。即使 gray 关闭也建议保留 meta"
+    "_comment": "rank/反馈/勘误/审计日志/favorites/library_folders。即使 gray 关闭也建议保留 meta"
   },
 
   "thresholds": {

@@ -503,12 +503,17 @@ def register_project(config_path, slug, label, source_root, db_path=None,
     if os.path.exists(config_path):
         with open(config_path, encoding="utf-8") as f:
             cfg = json.load(f)
+    # v3: 默认 db 目录从 config.defaults.projects_default_dir 读；缺失则用 <config_dir>/data/projects/
+    default_dir = (cfg.get("defaults") or {}).get("projects_default_dir")
+    if not default_dir:
+        default_dir = os.path.join(os.path.dirname(os.path.abspath(config_path)), "data", "projects")
+    default_dir = default_dir.replace("\\", "/").rstrip("/")
     projects = cfg.get("projects", [])
     projects = [p for p in projects if p.get("slug") != slug]
     entry = {
         "slug": slug,
         "label": label,
-        "db_path": db_path or ("E:/知识库/projects/" + slug + ".db"),
+        "db_path": db_path or (default_dir + "/" + slug + ".db"),
         "source_root": source_root.replace("\\", "/"),
         "source_glob": "**/*.md",
         "index_globs": index_globs or ["**/*.md"],
@@ -890,15 +895,19 @@ def kb_size_info(db_paths):
 # ============ v3: genre ============
 
 def list_genres(db_path):
-    """列出库内所有 genre 及其 doc 数（按 doc 数倒序）。"""
+    """列出库内所有 genre 及其 doc 数（按 doc 数倒序）。
+    若 db 是 v3 前的老库（无 doc_genre 表），返回 [] 而不是抛错。"""
     if not available(db_path):
         return []
     con = sqlite3.connect(db_path)
     try:
         con.execute("PRAGMA query_only=ON")
-        rows = con.execute(
-            "SELECT genre, COUNT(*) FROM doc_genre GROUP BY genre ORDER BY 2 DESC, 1"
-        ).fetchall()
+        try:
+            rows = con.execute(
+                "SELECT genre, COUNT(*) FROM doc_genre GROUP BY genre ORDER BY 2 DESC, 1"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []  # doc_genre 表不存在（老库），返回空
         return [{"genre": r[0] or "其他", "docs": r[1]} for r in rows]
     finally:
         con.close()
@@ -1015,13 +1024,18 @@ def register_library(config_path, slug, label, source_root, description="", tags
     projects = cfg.get("projects", [])
     # 去重 by slug
     projects = [p for p in projects if p.get("slug") != slug]
+    # v3: 默认 db 目录从 config.defaults.projects_default_dir 读；缺失则用 <config_dir>/data/projects/
+    default_dir = (cfg.get("defaults") or {}).get("projects_default_dir")
+    if not default_dir:
+        default_dir = os.path.join(os.path.dirname(os.path.abspath(config_path)), "data", "projects")
+    default_dir = default_dir.replace("\\", "/").rstrip("/")
     entry = {
         "slug": slug,
         "label": label,
         "description": description or "",
         "tags": tags or [],
         "icon": icon or "",
-        "db_path": db_path or ("E:/知识库/projects/" + slug + ".db"),
+        "db_path": db_path or (default_dir + "/" + slug + ".db"),
         "source_root": source_root.replace("\\", "/"),
         "source_glob": "**/*.md",
         "index_globs": index_globs or ["**/*.md"],

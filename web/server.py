@@ -106,6 +106,14 @@ def _refresh_config():
 ASSETS = os.path.join(HERE, "assets")
 DEFAULT_PORT = 8719
 
+
+def _resolve_port():
+    """v3: 端口从 config.server.port 读；CLI --port 优先级最高（main() 里覆盖）"""
+    try:
+        return int((CONFIG.get("server") or {}).get("port", DEFAULT_PORT))
+    except Exception:
+        return DEFAULT_PORT
+
 MIME = {".js": "application/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8",
         ".html": "text/html; charset=utf-8",
@@ -936,10 +944,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    # v3: 默认端口从 config.server.port 读；CLI --port 优先级最高
+    ap.add_argument("--port", type=int, default=None, help="服务端口（默认读 config.server.port，再 fallback 8719）")
     ap.add_argument("--open-browser", action="store_true")
     args = ap.parse_args()
-    port = args.port
+    port = args.port if args.port is not None else _resolve_port()
     srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = "http://127.0.0.1:{0}/".format(port)
     log.info("知识库终端启动 %s | 日志 %s | 审计 %s | meta=%s gray=%s", url, CUR_LOG, AUDIT_LOG, META_DB, GRAY_DB)
