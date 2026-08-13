@@ -1,6 +1,6 @@
 ---
 name: conversation-recall
-description: "Recall, search, and analyze a 3-domain distributed knowledge base: past opencode conversations, weekly reports, and per-project deliverables. Use when the user references prior work or past knowledge ('记得吗 / 之前说过 / 上次 / 我们讨论过 / 有没有聊过X / 继承上下文 / 找历史对话 / 查周报 / 查笔记 / previous session / recall'). Read-only; ships recall.py + kb_core.py (FTS5+jieba) with tiered progressive retrieval. 中文触发：找历史对话、之前聊过、记得吗、继承上下文、查周报、查笔记、聊天记录、RAG、回忆、搜索历史、检索记忆、历史记录、知识检索。"
+description: "Recall, search, and analyze a multi-domain distributed knowledge base: past opencode conversations, weekly reports, and per-project deliverables. Use when the user references prior work or past knowledge ('记得吗 / 之前说过 / 上次 / 我们讨论过 / 有没有聊过X / 继承上下文 / 找历史对话 / 查周报 / 查笔记 / previous session / recall'). Read-only; ships recall.py + kb_core.py (FTS5+jieba) with tiered progressive retrieval. 中文触发：找历史对话、之前聊过、记得吗、继承上下文、查周报、查笔记、聊天记录、RAG、回忆、搜索历史、检索记忆、历史记录、知识检索。"
 license: MIT
 compatibility:
   - claude-code
@@ -13,7 +13,7 @@ metadata:
   tags:
     - 工具
     - 知识库
-    - 三域检索
+    - 多域检索
     - 对话
     - 周报
     - 成果
@@ -32,11 +32,11 @@ allowed-tools:
   - read
 ---
 
-# conversation-recall（三域分布式知识检索）
+# conversation-recall（多域分布式知识检索）
 
-> Role：You are a read-only knowledge recall agent across three distributed domains. 让 AI 在当前会话里检索**三个独立知识域**，继承过往上下文。
+> Role：You are a read-only knowledge recall agent across multiple distributed domains. 让 AI 在当前会话里检索**多个独立知识域**，继承过往上下文。
 
-三域（各自独立 db，分布式存储）：
+多域（各自独立 db，分布式存储）：
 
 | 域 | db | 内容 | T1 索引 | 存库不索引 | genre 自动推断 |
 |----|----|------|---------|-----------|---------|
@@ -68,7 +68,7 @@ allowed-tools:
 
 ### 第一步：T1 多词并行检索（本说明唯一覆盖的命令）
 
-检索前先围绕主题设想 **10 个以上**检索词以提升命中率（同义词/子概念/中英文变体/标识符），然后**一次性**传给脚本，跨三域并行检索：
+检索前先围绕主题设想 **10 个以上**检索词以提升命中率（同义词/子概念/中英文变体/标识符），然后**一次性**传给脚本，跨多域并行检索：
 
 ```
 python "D:/Zzy的Skill工具包/conversation-recall/scripts/recall.py" search "词1" "词2" ... "词10" [--domain 对话|周报|成果|all] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--not "排除词"] [--limit N]
@@ -181,7 +181,7 @@ python "D:/Zzy的Skill工具包/conversation-recall/web/server.py"
 ## 路径
 
 - 脚本：`D:/Zzy的Skill工具包/conversation-recall/scripts/recall.py`（+ `kb_core.py` 文档域共享核心）
-- 配置：`D:/Zzy的Skill工具包/conversation-recall/config.json`（三域 + 项目注册表）
+- 配置：`D:/Zzy的Skill工具包/conversation-recall/config.json`（多域 + 项目注册表）
 - 对话域 db：`D:/Zzy的Skill工具包/conversation-recall/index/recall.db`
 - 周报域 db：`E:/知识库/weekly.db`（源 `E:/周报/`）
 - 成果域 db：`E:/知识库/projects/<slug>.db`（R2 策展入库填充）
@@ -191,9 +191,9 @@ python "D:/Zzy的Skill工具包/conversation-recall/web/server.py"
 ```
 conversation-recall/
 ├── SKILL.md
-├── config.json          # 三域 + 项目注册表
+├── config.json          # 多域 + 项目注册表
 ├── scripts/
-│   ├── recall.py        # 三域统一查询/分级展开
+│   ├── recall.py        # 多域统一查询/分级展开
 │   └── kb_core.py       # 文档域共享核心（切片/sync/查询/展开）
 ├── index/recall.db      # 对话域（生成物，gitignored）
 └── dev_log/             # 多轮开发自检表单（gitignored）
