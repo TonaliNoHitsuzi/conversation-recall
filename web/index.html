@@ -436,6 +436,7 @@ details.adv .adv-body{padding:8px 0 0}
 @media (min-width:768px){ .dt-back{display:none} }
 @media (max-width:420px){ .bar{padding:8px 10px} }
 @media (prefers-reduced-motion:reduce){ *,*::before,*::after{animation-duration:.01ms!important; transition-duration:.01ms!important} }
+
 </style>
 </head>
 <body>
@@ -471,6 +472,9 @@ details.adv .adv-body{padding:8px 0 0}
       <button class="btn icon-only" id="themeBtn" onclick="cycleTheme()" title="主题"></button>
       <button class="btn icon-only" onclick="openSettings()" title="设置">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+      <button class="btn icon-only danger" id="shutdownBtn" onclick="shutdownAll()" title="一键关闭（结束前后端服务）">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><path d="M12 2v10"/></svg>
       </button>
     </div>
   </div>
@@ -774,7 +778,7 @@ const state = {
   navOpen:false, favView:[]
 };
 const settings = Object.assign({
-  mermaidExport:'png', expandMode:'segment', navHidden:false
+  mermaidExport:'png', expandMode:'segment', navHidden:false, shutdownConfirm:true
 }, JSON.parse(localStorage.getItem('kb-settings')||'{}'));
 function saveSettings(){ try{ localStorage.setItem('kb-settings', JSON.stringify(settings)); }catch(e){} }
 
@@ -862,6 +866,59 @@ async function api(path, opts){
 function post(path, data){
   return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
 }
+
+/* ==================== 生命周期：心跳 / 关网页联动 / 一键关闭 ====================
+   心跳每 10s 一次告知后端"页面活着"；关标签页时 pagehide 发 bye（sendBeacon）；
+   全部页面离开 → 后端 5s 缓冲后自动退出（刷新场景新页面心跳会取消关停）。
+   按钮关闭 → /api/shutdown 一键结束后端，并自动带上前端页面一起关。 */
+const CID = (()=>{
+  try{
+    let c = sessionStorage.getItem('kb-cid');
+    if(!c){ c = (crypto.randomUUID ? crypto.randomUUID() : 'c'+Date.now()+'-'+Math.random().toString(36).slice(2)); sessionStorage.setItem('kb-cid', c); }
+    return c;
+  }catch(e){ return 'c'+Date.now()+'-'+Math.random().toString(36).slice(2); }
+})();
+let _beatTimer = null;
+function selfClose(){
+  /* 前端随服务一起关闭：先尝试 window.close；被浏览器拦住就退到空白页（不挂提示页） */
+  try{ window.close(); }catch(e){}
+  setTimeout(()=>{ try{ if(!window.closed) location.replace('about:blank'); }catch(e){} }, 300);
+}
+function beat(){
+  fetch('/api/heartbeat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({client_id:CID}), keepalive:true})
+    .then(r=>r.ok ? r.json() : null)
+    .then(d=>{ if(d && d.shutting_down){ try{ clearInterval(_beatTimer); }catch(e){} selfClose(); } })
+    .catch(()=>{});
+}
+function leaveBeat(){
+  try{ navigator.sendBeacon('/api/bye', new Blob([JSON.stringify({client_id:CID})], {type:'application/json'})); }catch(e){}
+}
+function shutdownAll(){
+  if(settings.shutdownConfirm === false){ doShutdown(); return; }
+  $('#modalRoot').innerHTML =
+  '<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="modal" role="dialog" style="width:min(420px,100%)">'+
+    '<h3>关闭服务</h3>'+
+    '<p style="font-size:13px;color:var(--ink-2);margin:0 0 10px">将同时结束后端服务（隐藏后台一并退出），下次使用需重新运行启动器。</p>'+
+    '<label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink-2)">'+
+      '<input type="checkbox" id="sdNoAsk"> 不再询问（可在 设置 → 通用 恢复）</label>'+
+    '<div class="modal-actions"><button class="btn" onclick="closeModal()">取消</button>'+
+      '<button class="btn danger" onclick="confirmShutdown()">关闭</button></div>'+
+  '</div></div>';
+}
+function confirmShutdown(){
+  if($('#sdNoAsk') && $('#sdNoAsk').checked){ settings.shutdownConfirm = false; saveSettings(); }
+  closeModal();
+  doShutdown();
+}
+function doShutdown(){
+  try{ clearInterval(_beatTimer); }catch(e){}
+  try{ window.removeEventListener('pagehide', leaveBeat); }catch(e){}
+  try{ fetch('/api/shutdown', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}', keepalive:true}).catch(()=>{}); }catch(e){}
+  selfClose();
+}
+window.addEventListener('pagehide', leaveBeat);
+beat();
+_beatTimer = setInterval(beat, 10000);
 
 /* ==================== Toast 与模态框 ==================== */
 function toast(msg, type, ms){
@@ -1171,6 +1228,7 @@ async function loadNav(){
   try{
     const [st, libRes] = await Promise.all([api('/api/status'), api('/api/libraries')]);
     STATUS_DOMAINS = st.domains;
+    if(st.standby){ const sb = $('#shutdownBtn'); if(sb) sb.style.display = 'none'; }
     st.domains.forEach(d => DOMAIN_LABELS[d.key] = d.label);
     LIBS = libRes.libraries || [];
     FOLDERS = libRes.folders || [];
@@ -1943,6 +2001,9 @@ function openSettings(){
       '<div class="settings-row"><div class="sr-label">主题<span class="sr-sub">跟随系统 / 亮色 / 暗色 三态循环</span></div><button class="btn" onclick="cycleTheme();openSettings()">'+themeLabel()+'</button></div>'+
       '<div class="settings-row"><div class="sr-label">库导航<span class="sr-sub">快捷键 [ 切换</span></div><button class="btn" onclick="toggleNav();openSettings()">'+(settings.navHidden?'已隐藏':'显示中')+'</button></div>'+
     '</div>'+
+    '<div class="settings-sec"><h4>通用</h4>'+
+      '<div class="settings-row"><div class="sr-label">关闭确认<span class="sr-sub">一键关闭时是否弹二次确认</span></div><button class="btn" onclick="toggleShutdownConfirm()">'+(settings.shutdownConfirm===false?'已关闭（点击开启）':'开启中（点击关闭）')+'</button></div>'+
+    '</div>'+
     '<div class="settings-sec"><h4>阅读</h4>'+
       '<div class="settings-row"><div class="sr-label">Mermaid 默认导出格式</div>'+
         '<span class="selwrap"><select id="setMmdFmt"><option value="png">PNG</option><option value="svg">SVG</option></select></span></div>'+
@@ -1968,6 +2029,13 @@ function openSettings(){
 function themeLabel(){
   const m = document.documentElement.dataset.themeMode;
   return m==='auto' ? '跟随系统' : m==='light' ? '亮色' : '暗色';
+}
+function toggleShutdownConfirm(){
+  /* 关→开（恢复确认），开→关（不再询问） */
+  settings.shutdownConfirm = (settings.shutdownConfirm === false);
+  saveSettings();
+  toast(settings.shutdownConfirm ? '关闭确认已开启' : '关闭确认已关闭', 'good', 1800);
+  openSettings();
 }
 function renderFolderRows(){
   const box = $('#folderRows');
@@ -2110,5 +2178,6 @@ $('#results').innerHTML = emptyHtml('search','搜索你的知识库','左侧点�
 $('#detail').innerHTML = '<div style="padding:14px">'+emptyHtml('panel','点击结果查看详情','支持 Markdown / 图片 / Mermaid / 代码 / LaTeX 渲染。<br><kbd>↑</kbd><kbd>↓</kbd> 切换结果 · <kbd>Enter</kbd> 打开 · <kbd>Esc</kbd> 关闭 · <kbd>[</kbd> 导航显隐')+'</div>';
 loadNav().then(()=>{ updateWsTitle(); loadGenreChips(); });
 </script>
+<script src="assets/app-rail.js"></script>
 </body>
 </html>

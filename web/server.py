@@ -12,6 +12,7 @@ import json
 import sqlite3
 import logging
 import threading
+import time
 import urllib.parse
 import webbrowser
 import argparse
@@ -72,9 +73,11 @@ _fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 _fh = logging.FileHandler(CUR_LOG, encoding="utf-8")
 _fh.setFormatter(_fmt)
 log.addHandler(_fh)
-_sh = logging.StreamHandler(sys.stdout)
-_sh.setFormatter(_fmt)
-log.addHandler(_sh)
+# pythonw（隐藏终端启动）下 stdout/stderr 为 None，此时只留文件日志
+if sys.stdout is not None:
+    _sh = logging.StreamHandler(sys.stdout)
+    _sh.setFormatter(_fmt)
+    log.addHandler(_sh)
 
 
 def append_audit(record):
@@ -419,6 +422,73 @@ def _search(queries, domain_filter, role, limit, since=None, until=None, negativ
     return out
 
 
+# ==================== 生命周期：页面心跳 / 关网页联动 / 一键关闭 ====================
+CLIENT_STALE_SECS = 1800  # 心跳过期上限（放宽到 30min：容忍后台标签节流 + 电脑睡眠唤醒）
+EMPTY_GRACE_SECS = 5      # 全部页面离开后的缓冲（覆盖 F5 刷新：新页面心跳会取消关停）
+SHUTDOWN_DELAY = 0.6      # /api/shutdown 先回包再停服（给响应留送达时间）
+PAGE_NO_HB_SECS = 60      # 防僵尸：页面已请求但从未收到心跳（前端脚本挂了/秒关）→ 关服
+BOOT_IDLE_SECS = 600      # 防僵尸：启动后从无任何页面连接（隐藏启动孤儿）→ 关服
+
+_boot_mono = [time.monotonic()]
+_lk = threading.Lock()
+_clients = {}             # client_id -> 最后心跳时刻（time.monotonic()）
+_had_clients = [False]    # 是否有过页面连接（防止"从没打开过页面也被误关"）
+_empty_since = [None]     # 全部页面离开的时刻（进入缓冲倒计时）
+_page_served = [None]     # index.html 发出但尚无心跳的时刻（None=无未回音页面）
+_shutting_down = [False]
+_srv_ref = [None]
+_standby_mode = [False]
+
+
+def _request_shutdown(reason):
+    with _lk:
+        if _shutting_down[0]:
+            return
+        _shutting_down[0] = True
+    log.info("收到关闭请求（%s），服务退出", reason)
+    srv = _srv_ref[0]
+    if srv is None:
+        os._exit(0)
+    def _stop():
+        try:
+            srv.shutdown()
+        except Exception:
+            os._exit(0)
+    threading.Thread(target=_stop, daemon=True).start()
+
+
+def _lifecycle_watchdog():
+    """每秒巡检：
+    1) 清理过期心跳（后台节流/睡眠，宽 30min）；
+    2) 全部页面离开满 EMPTY_GRACE_SECS → 关服（刷新场景新页面心跳会取消）；
+    3) 页面发了但 60s 无心跳、或启动后 10min 无任何页面 → 防僵尸关服。"""
+    while not _shutting_down[0]:
+        time.sleep(1.0)
+        now = time.monotonic()
+        fire, reason = False, ""
+        with _lk:
+            stale = [c for c, t in _clients.items() if now - t > CLIENT_STALE_SECS]
+            for c in stale:
+                del _clients[c]
+            if stale:
+                log.info("心跳过期，清理 %d 个客户端", len(stale))
+            if _clients:
+                _empty_since[0] = None
+            elif _had_clients[0] and _empty_since[0] is None:
+                _empty_since[0] = now
+            if _had_clients[0] and not _clients and _empty_since[0] is not None \
+                    and now - _empty_since[0] >= EMPTY_GRACE_SECS:
+                fire, reason = True, "全部网页已离开"
+            elif not _had_clients[0] and _page_served[0] is not None \
+                    and now - _page_served[0] > PAGE_NO_HB_SECS:
+                fire, reason = True, "页面已打开但始终无心跳"
+            elif not _had_clients[0] and _page_served[0] is None \
+                    and now - _boot_mono[0] > BOOT_IDLE_SECS:
+                fire, reason = True, "启动后无任何页面连接"
+        if fire:
+            _request_shutdown(reason)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.info("%s - %s", self.address_string(), fmt % args)
@@ -445,6 +515,9 @@ class Handler(BaseHTTPRequestHandler):
         qs = urllib.parse.parse_qs(u.query)
         try:
             if p == "/" or p == "/index.html":
+                with _lk:
+                    if _page_served[0] is None:
+                        _page_served[0] = time.monotonic()
                 self._send_file(os.path.join(HERE, "index.html"))
             elif p.startswith("/assets/"):
                 name = os.path.basename(p)
@@ -773,6 +846,30 @@ class Handler(BaseHTTPRequestHandler):
                               "folder_id": data["folder_id"], "undo": "（无法撤销）",
                               "actor": self.client_address[0]})
                 self._send(200, _jsend(r))
+            elif p == "/api/heartbeat":
+                # 页面存活心跳：刷新客户端在线表；若正在关停则告知前端
+                cid = (data.get("client_id") or "").strip()
+                if cid:
+                    with _lk:
+                        _had_clients[0] = True
+                        _page_served[0] = None
+                        _clients[cid] = time.monotonic()
+                        _empty_since[0] = None
+                self._send(200, _jsend({"ok": True, "shutting_down": _shutting_down[0]}))
+            elif p == "/api/bye":
+                # 页面关闭/跳转（sendBeacon）：移除客户端；全部离开 → 缓冲后自动关服
+                cid = (data.get("client_id") or "").strip()
+                if cid:
+                    with _lk:
+                        _clients.pop(cid, None)
+                        if not _clients and _had_clients[0] and _empty_since[0] is None:
+                            _empty_since[0] = time.monotonic()
+                self._send(200, _jsend({"ok": True}))
+            elif p == "/api/shutdown":
+                # 一键关闭：先回包，延迟片刻再停服
+                append_audit({"ts": _iso_now(), "action": "shutdown", "actor": self.client_address[0]})
+                self._send(200, _jsend({"ok": True, "bye": True}))
+                threading.Timer(SHUTDOWN_DELAY, lambda: _request_shutdown("网页关闭按钮")).start()
             elif p == "/api/pick-folder":
                 # 调用 Windows 原生 FolderBrowserDialog（PowerShell 子进程）
                 import subprocess
@@ -921,7 +1018,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"err": "未找到 doc_id"}
 
     def _status(self):
-        st = {"domains": []}
+        st = {"domains": [], "standby": _standby_mode[0]}
         conv = CONFIG["conversation"]
         idx = _open_idx()
         cnt = recall.meta_get(idx, "indexed_count", "0")
@@ -947,11 +1044,25 @@ def main():
     # v3: 默认端口从 config.server.port 读；CLI --port 优先级最高
     ap.add_argument("--port", type=int, default=None, help="服务端口（默认读 config.server.port，再 fallback 8719）")
     ap.add_argument("--open-browser", action="store_true")
+    ap.add_argument("--standby", action="store_true",
+                    help="常驻托管模式（FlyEnv 等服务化托管）：禁用网页关闭联动/僵尸检测自动关服")
     args = ap.parse_args()
+    _standby_mode[0] = args.standby
     port = args.port if args.port is not None else _resolve_port()
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     url = "http://127.0.0.1:{0}/".format(port)
-    log.info("知识库终端启动 %s | 日志 %s | 审计 %s | meta=%s gray=%s", url, CUR_LOG, AUDIT_LOG, META_DB, GRAY_DB)
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError:
+        # 端口被占（多半已有实例在跑，隐藏启动防僵尸）：转而把浏览器指到现有实例
+        log.warning("端口 %s 已被占用，可能已有实例在运行", port)
+        if args.open_browser:
+            webbrowser.open(url)
+        return
+    _srv_ref[0] = srv
+    if not args.standby:
+        threading.Thread(target=_lifecycle_watchdog, daemon=True).start()
+    log.info("知识库终端启动 %s | 日志 %s | 审计 %s | meta=%s gray=%s | standby=%s",
+             url, CUR_LOG, AUDIT_LOG, META_DB, GRAY_DB, args.standby)
     if args.open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
@@ -960,11 +1071,14 @@ def main():
         pass
     finally:
         try:
-            with open(CUR_LOG, "a", encoding="utf-8") as f:
-                f.write("\n" + CLEAN_MARKER + "\n")
+            srv.server_close()
         except Exception:
             pass
-        log.info("已正常关闭")
+        try:
+            with open(CUR_LOG, "a", encoding="utf-8") as f:
+                f.write(CLEAN_MARKER + "\n")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
