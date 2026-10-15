@@ -134,14 +134,12 @@ input[type="text"]:focus,input[type="date"]:focus,textarea:focus{border-color:va
   display:grid; grid-template-columns:230px minmax(320px,5fr) minmax(420px,7fr); gap:10px; padding:10px 14px;
   transition:grid-template-columns .25s var(--ease);
 }
-body.nav-hidden .main{grid-template-columns:0 minmax(320px,5fr) minmax(420px,7fr)}
 .pane{
   display:flex; flex-direction:column; min-height:0; min-width:0;
   background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
   box-shadow:var(--shadow-sm); overflow:hidden;
 }
-.pane-nav{transition:opacity .2s; }
-body.nav-hidden .pane-nav{opacity:0; pointer-events:none; border-color:transparent}
+.pane-nav{min-width:0}
 .pane-head{
   flex:0 0 auto; display:flex; align-items:center; gap:8px;
   padding:9px 12px; border-bottom:1px solid var(--line);
@@ -404,17 +402,10 @@ details.adv .adv-body{padding:8px 0 0}
 
 /* ============ 响应式 ============ */
 @media (max-width:1199px){
-  .main{grid-template-columns:0 minmax(300px,1fr) minmax(380px,1.3fr)}
-  .pane-nav{position:fixed; left:10px; top:58px; bottom:10px; width:250px; z-index:25; box-shadow:var(--shadow-lg); transform:translateX(-120%); transition:transform .25s var(--ease)}
-  body.nav-open .pane-nav{transform:none; opacity:1}
-  body.nav-hidden .main{grid-template-columns:0 minmax(300px,1fr) minmax(380px,1.3fr)}
-}
-@media (min-width:1200px){
-  .pane-nav{transform:none!important; position:static; box-shadow:var(--shadow-sm)}
+  .main{grid-template-columns:minmax(150px,200px) minmax(280px,1fr) minmax(340px,1.2fr)}
 }
 @media (max-width:767px){
   .main{grid-template-columns:1fr; padding:8px; gap:8px}
-  body.nav-hidden .main{grid-template-columns:1fr}
   .pane-detail{position:fixed; inset:0; z-index:40; border-radius:0; border:0; transform:translateY(102%); transition:transform .3s var(--ease); visibility:hidden}
   body.detail-open .pane-detail{transform:none; visibility:visible}
   .dt-back{display:inline-flex}
@@ -432,9 +423,6 @@ details.adv .adv-body{padding:8px 0 0}
 <body>
 <header>
   <div class="bar">
-    <button class="btn icon-only" id="navBtn" title="库导航（[ 切换）">
-      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
-    </button>
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l4 4-4 4"/><path d="M12 15h7"/></svg>
@@ -767,7 +755,7 @@ const state = {
   scope:'all',             // 'all' | domain key | 'fav'
   genre:'',                // 当前 genre 过滤
   genresByDomain:{},       // 缓存 /api/genres
-  navOpen:false, favView:[]
+  favView:[]
 };
 const settings = Object.assign({
   mermaidExport:'png', expandMode:'segment', navHidden:false, shutdownConfirm:true
@@ -1313,7 +1301,6 @@ function toggleFolder(fid){
 async function setScope(scope){
   state.scope = scope;
   state.genre = '';
-  document.body.classList.remove('nav-open');
   if(scope === 'fav'){ showFavorites(); renderNav(); return; }
   renderNav();
   updateWsTitle();
@@ -1992,7 +1979,6 @@ function openSettings(){
     '<h3>设置</h3>'+
     '<div class="settings-sec"><h4>外观</h4>'+
       '<div class="settings-row"><div class="sr-label">主题<span class="sr-sub">跟随系统 / 亮色 / 暗色 三态循环</span></div><button class="btn" onclick="cycleTheme();openSettings()">'+themeLabel()+'</button></div>'+
-      '<div class="settings-row"><div class="sr-label">库导航<span class="sr-sub">快捷键 [ 切换</span></div><button class="btn" onclick="toggleNav();openSettings()">'+(settings.navHidden?'已隐藏':'显示中')+'</button></div>'+
     '</div>'+
     '<div class="settings-sec"><h4>通用</h4>'+
       '<div class="settings-row"><div class="sr-label">关闭确认<span class="sr-sub">一键关闭时是否弹二次确认</span></div><button class="btn" onclick="toggleShutdownConfirm()">'+(settings.shutdownConfirm===false?'已关闭（点击开启）':'开启中（点击关闭）')+'</button></div>'+
@@ -2009,7 +1995,7 @@ function openSettings(){
       '<div class="settings-row"><div class="sr-label">库管理<span class="sr-sub">编辑 / 删除 / 元信息</span></div><button class="btn" onclick="openLibManager()">打开</button></div></div>'+
     '<div class="settings-sec"><h4>快捷键</h4><div class="kbd-grid">'+
       '<div><kbd>/</kbd> 聚焦搜索</div><div><kbd>Esc</kbd> 关闭 / 失焦</div><div><kbd>↑</kbd><kbd>↓</kbd> 切换结果</div>'+
-      '<div><kbd>Enter</kbd> 打开选中</div><div><kbd>[</kbd> 库导航显隐</div>'+
+      '<div><kbd>Enter</kbd> 打开选中</div>+'
     '</div></div>'+
     '<div class="modal-actions"><button class="btn primary" onclick="closeModal()">完成</button></div>'+
   '</div></div>';
@@ -2102,35 +2088,10 @@ KitTheme.onApply(function(){
 function applyTheme(mode){ KitTheme.apply(mode); }
 function cycleTheme(){ KitTheme.cycle(); }
 
-/* ==================== 库导航显隐（需求 4） ==================== */
-/* 宽窄判定：clientWidth（不含滚动条）+ 滞回（≥1200 进宽、<1160 才回窄）——
-   防窗口宽贴 1200 边界时，列开关引发滚动条出现/消失或缩放抖动导致 innerWidth 反复跨界、列被 resize 强制收起 */
-let _navWideNow = document.documentElement.clientWidth >= 1200;
-function navIsWide(){
-  const w = document.documentElement.clientWidth;
-  if (_navWideNow && w < 1160) _navWideNow = false;
-  if (!_navWideNow && w >= 1200) _navWideNow = true;
-  return _navWideNow;
-}
-function toggleNav(){
-  settings.navHidden = !settings.navHidden;
-  saveSettings();
-  applyNavState();
-}
-function applyNavState(){
-  if(navIsWide()){
-    document.body.classList.toggle('nav-hidden', !!settings.navHidden);
-    document.body.classList.remove('nav-open');
-  }else{
-    document.body.classList.remove('nav-hidden');
-    document.body.classList.toggle('nav-open', !!state.navOpen);
-  }
-}
-$('#navBtn').addEventListener('click', ()=>{
-  if(navIsWide()) toggleNav();
-  else { state.navOpen = !state.navOpen; document.body.classList.toggle('nav-open', state.navOpen); }
-});
-window.addEventListener('resize', applyNavState);
+/* ==================== 库导航（常驻 · v3：显隐功能废除） ====================
+   设计裁定：库导航是常驻 UI，不提供任何关闭/开启途径（旧 navBtn / [ 键 / 设置项 / 窄屏浮层已全数移除）。
+   兼容清理：剥离历史持久化或残留的 nav-hidden / nav-open 状态。 */
+document.body.classList.remove('nav-hidden', 'nav-open');
 
 /* ==================== 快捷键 ==================== */
 document.addEventListener('keydown', e=>{
@@ -2141,12 +2102,7 @@ document.addEventListener('keydown', e=>{
   }else if(e.key==='Escape'){
     if(document.querySelector('.overlay')) closeModal();
     else if(document.body.classList.contains('detail-open')) closeDetail();
-    else if(document.body.classList.contains('nav-open')){ state.navOpen=false; document.body.classList.remove('nav-open'); }
     else if(typing) e.target.blur();
-  }else if(e.key==='[' && !typing){
-    e.preventDefault();
-    if(navIsWide()) toggleNav();
-    else { state.navOpen=!state.navOpen; document.body.classList.toggle('nav-open', state.navOpen); }
   }else if(!typing && (e.key==='ArrowDown' || e.key==='ArrowUp')){
     if(state.view!=='results' || !state.hits.length) return;
     e.preventDefault();
@@ -2160,7 +2116,6 @@ document.addEventListener('keydown', e=>{
 /* ==================== 初始化 ==================== */
 async function refreshAll(){ await loadNav(); updateWsTitle(); loadGenreChips(); if(state.view==='results') doSearch(); }
 updateThemeBtn();
-applyNavState();
 updateWsTitle();
 $('#results').innerHTML = emptyHtml('search','搜索你的知识库','左侧点库进入工作台；输入关键词（多词空格分隔）<br>或直接回车按时间倒序浏览最近文档',['周报 多模态','FTS5','校准']);
 $('#detail').innerHTML = '<div style="padding:14px">'+emptyHtml('panel','点击结果查看详情','支持 Markdown / 图片 / Mermaid / 代码 / LaTeX 渲染。<br><kbd>↑</kbd><kbd>↓</kbd> 切换结果 · <kbd>Enter</kbd> 打开 · <kbd>Esc</kbd> 关闭 · <kbd>[</kbd> 导航显隐')+'</div>';
