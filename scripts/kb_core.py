@@ -30,7 +30,7 @@ CHARS_PER_TOKEN = 0.75
 HEADING_RE = re.compile(r'^(#{1,6})\s+(.*?)\s*$', re.MULTILINE)
 FM_RE = re.compile(r'^---\s*\n(.*?)\n---\s*\n?(.*)$', re.DOTALL)
 
-DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "config.json")
 
 
 def est_tokens(t):
@@ -1325,7 +1325,7 @@ def _cli():
     sp.add_argument("--exclude-globs", default="")
     sp.add_argument("--force", action="store_true")
 
-    sp = sub.add_parser("register-project", help="把项目登记进 conversation-recall/config.json")
+    sp = sub.add_parser("register-project", help="把项目登记进 conversation-recall/config/config.json")
     sp.add_argument("--config", default=DEFAULT_CONFIG)
     sp.add_argument("--slug", required=True)
     sp.add_argument("--label", required=True)

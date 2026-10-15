@@ -1,11 +1,16 @@
 @echo off
 chcp 65001 >nul
 REM ============================================================
-REM   conversation-recall · 本地网页人工入口终端启动器
-REM   用法：双击本文件，或在终端执行  web\run.bat
-REM   首次启动访问  http://127.0.0.1:8719
+REM   conversation-recall web launcher
+REM   Default   : hidden backend (pythonw, no console window),
+REM               the server opens the web UI in your browser.
+REM   Debug mode: run.bat debug  -> visible console with live logs
+REM   Stop      : web UI power button (top-right), or closing
+REM               all pages auto-stops the backend.
 REM ============================================================
-
 cd /d "%~dp0"
-python server.py
-pause
+if /i "%~1"=="debug" (
+  python server.py
+  goto :eof
+)
+start "" pythonw server.py --open-browser

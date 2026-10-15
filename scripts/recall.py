@@ -29,7 +29,7 @@ import jieba
 import kb_core
 
 HUB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(HUB_DIR, "config.json")
+CONFIG_PATH = os.path.join(HUB_DIR, "config", "config.json")
 INDEX_DIR = os.path.join(HUB_DIR, "index")
 INDEX_DB = os.path.join(INDEX_DIR, "recall.db")
 OPENCODE_DB = os.path.join(os.path.expanduser("~"), ".local", "share", "opencode", "opencode.db")

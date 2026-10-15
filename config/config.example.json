@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "多域分布式知识体系配置。复制本文件为 config.json 后按本机环境修改。db_path 相对路径以本文件所在目录(conversation-recall/)为根；绝对路径(如 E:/...)也支持。conversation 域默认开启(只需 opencode 历史)；weekly/projects/gray/meta 按需启用。",
+  "_comment": "多域分布式知识体系配置。复制本文件为同目录 config.json 后按本机环境修改（2026-10-14 起配置位于 config/ 子目录，脚本按 config/config.json 读取）。db_path 相对路径以技能根目录(conversation-recall/)为锚解析，与 config 文件位置无关；绝对路径(如 E:/...)也支持。conversation 域默认开启(只需 opencode 历史)；weekly/projects/gray/meta 按需启用。",
 
   "server": {
     "port": 8719,

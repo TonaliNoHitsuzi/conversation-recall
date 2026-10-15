@@ -522,6 +522,12 @@ class Handler(BaseHTTPRequestHandler):
             elif p.startswith("/assets/"):
                 name = os.path.basename(p)
                 fp = os.path.join(ASSETS, name)
+                if name == "apps.json":
+                    # app-rail 导航轨单一来源：转发库根 config/apps.json（改一处三面板同步；
+                    # 本服务在库内，按 __file__ 相对自定位库根，缺文件回落本地资产/404）
+                    master = os.path.normpath(os.path.join(HERE, "..", "..", "config", "apps.json"))
+                    if os.path.isfile(master):
+                        fp = master
                 if os.path.isfile(fp):
                     self._send_file(fp)
                 else:
