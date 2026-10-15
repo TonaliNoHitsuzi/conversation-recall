@@ -2103,14 +2103,22 @@ function applyTheme(mode){ KitTheme.apply(mode); }
 function cycleTheme(){ KitTheme.cycle(); }
 
 /* ==================== 库导航显隐（需求 4） ==================== */
+/* 宽窄判定：clientWidth（不含滚动条）+ 滞回（≥1200 进宽、<1160 才回窄）——
+   防窗口宽贴 1200 边界时，列开关引发滚动条出现/消失或缩放抖动导致 innerWidth 反复跨界、列被 resize 强制收起 */
+let _navWideNow = document.documentElement.clientWidth >= 1200;
+function navIsWide(){
+  const w = document.documentElement.clientWidth;
+  if (_navWideNow && w < 1160) _navWideNow = false;
+  if (!_navWideNow && w >= 1200) _navWideNow = true;
+  return _navWideNow;
+}
 function toggleNav(){
   settings.navHidden = !settings.navHidden;
   saveSettings();
   applyNavState();
 }
 function applyNavState(){
-  const wide = window.innerWidth >= 1200;
-  if(wide){
+  if(navIsWide()){
     document.body.classList.toggle('nav-hidden', !!settings.navHidden);
     document.body.classList.remove('nav-open');
   }else{
@@ -2119,7 +2127,7 @@ function applyNavState(){
   }
 }
 $('#navBtn').addEventListener('click', ()=>{
-  if(window.innerWidth >= 1200) toggleNav();
+  if(navIsWide()) toggleNav();
   else { state.navOpen = !state.navOpen; document.body.classList.toggle('nav-open', state.navOpen); }
 });
 window.addEventListener('resize', applyNavState);
@@ -2137,7 +2145,7 @@ document.addEventListener('keydown', e=>{
     else if(typing) e.target.blur();
   }else if(e.key==='[' && !typing){
     e.preventDefault();
-    if(window.innerWidth>=1200) toggleNav();
+    if(navIsWide()) toggleNav();
     else { state.navOpen=!state.navOpen; document.body.classList.toggle('nav-open', state.navOpen); }
   }else if(!typing && (e.key==='ArrowDown' || e.key==='ArrowUp')){
     if(state.view!=='results' || !state.hits.length) return;
