@@ -528,6 +528,10 @@ class Handler(BaseHTTPRequestHandler):
                     master = os.path.normpath(os.path.join(HERE, "..", "..", "config", "apps.json"))
                     if os.path.isfile(master):
                         fp = master
+                elif p.startswith("/assets/kit/"):
+                    # 前端共享 kit 单源（meta-panel 规范件）：母版在库根 meta-panel/assets/，
+                    # 同 apps.json 的相对自定位转发模式；缺文件回落本地资产/404
+                    fp = os.path.normpath(os.path.join(HERE, "..", "..", "meta-panel", "assets", name))
                 if os.path.isfile(fp):
                     self._send_file(fp)
                 else:
@@ -1045,6 +1049,14 @@ class Handler(BaseHTTPRequestHandler):
         return st
 
 
+class KBServer(ThreadingHTTPServer):
+    daemon_threads = True
+    # Windows 的 SO_REUSEADDR 允许第二实例双绑劫持在听端口（心跳/自杀联动会错乱，
+    # 幂等退出永不触发），必须关；POSIX 保留 True 以便快速重启（TIME_WAIT 不阻塞监听）。
+    # 同款修复：meta-board/scripts/server.py、harbor/code/panel/server.py（14-问题清单 P1-1）
+    allow_reuse_address = (os.name != "nt")
+
+
 def main():
     ap = argparse.ArgumentParser()
     # v3: 默认端口从 config.server.port 读；CLI --port 优先级最高
@@ -1057,7 +1069,7 @@ def main():
     port = args.port if args.port is not None else _resolve_port()
     url = "http://127.0.0.1:{0}/".format(port)
     try:
-        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        srv = KBServer(("127.0.0.1", port), Handler)
     except OSError:
         # 端口被占（多半已有实例在跑，隐藏启动防僵尸）：转而把浏览器指到现有实例
         log.warning("端口 %s 已被占用，可能已有实例在运行", port)

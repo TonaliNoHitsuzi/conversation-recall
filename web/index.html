@@ -4,18 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>知识库终端</title>
-<script>
-/* 主题引导：首帧前确定明暗，避免闪烁。localStorage 无记录时跟随系统。 */
-(function(){
-  var mode = null;
-  try{ mode = localStorage.getItem('kb-theme'); }catch(e){}
-  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  var hash = /[#&]theme=(light|dark)/.exec(location.hash || '');
-  if(!mode && hash) mode = hash[1];
-  document.documentElement.dataset.themeMode = mode || 'auto';
-  document.documentElement.dataset.theme = mode || (dark ? 'dark' : 'light');
-})();
-</script>
+<!-- 主题母版（meta-panel/assets/kit/theme.js，server 同源转发）：首帧前确定明暗，避免闪烁；LS 无记录时跟随系统 -->
+<script src="assets/kit/theme.js" data-key="kb-theme"></script>
 <link rel="stylesheet" href="assets/github-markdown.css">
 <style>
 /* ============ 设计变量：暖纸底 × 深海军蓝墨 × 单一青石蓝强调 ============ */
@@ -762,6 +752,8 @@ $$ u_c = \\sqrt{u_{\\mathrm{std}}^2 + u_{\\mathrm{bath}}^2} = 15\\,\\mathrm{mK} 
 })();
 }
 </script>
+<script src="assets/kit/api.js"></script>
+<script src="assets/kit/toast.js"></script>
 <script>
 /* ==================== 状态与工具 ==================== */
 const $ = s => document.querySelector(s);
@@ -857,11 +849,9 @@ function badgeHtml(b){
   return s;
 }
 
-/* ==================== API ==================== */
+/* ==================== API（母版 meta-panel/assets/kit/api.js：err 正文/status/data 语义） ==================== */
 async function api(path, opts){
-  const r = await fetch(path, opts || {});
-  if(!r.ok) throw new Error('HTTP '+r.status);
-  return r.json();
+  return KitApi.request(path, opts);
 }
 function post(path, data){
   return api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
@@ -920,14 +910,17 @@ window.addEventListener('pagehide', leaveBeat);
 beat();
 _beatTimer = setInterval(beat, 10000);
 
-/* ==================== Toast 与模态框 ==================== */
+/* ==================== Toast 与模态框（toast 母版在 meta-panel/assets/kit/toast.js） ==================== */
+KitToast.configure({
+  cls: { good: 'good', bad: 'bad', info: 'info' },
+  defaultMs: 3000,
+  outMs: 320,
+  render: function(el, msg, kind){
+    el.innerHTML = icon(kind==='good'?'check':kind==='bad'?'err':'info') + '<span>'+msg+'</span>';
+  }
+});
 function toast(msg, type, ms){
-  type = type || 'info'; ms = ms || 3000;
-  const t = document.createElement('div');
-  t.className = 'toast '+type;
-  t.innerHTML = icon(type==='good'?'check':type==='bad'?'err':'info') + '<span>'+msg+'</span>';
-  $('#toastRoot').appendChild(t);
-  setTimeout(()=>{ t.classList.add('out'); setTimeout(()=>t.remove(), 320); }, ms);
+  return KitToast.show(msg, type, ms);
 }
 function closeModal(){ $('#modalRoot').innerHTML=''; }
 function copyText(txt, okMsg){
@@ -2090,8 +2083,7 @@ function deleteFolder(fid, btn){
   });
 }
 
-/* ==================== 主题（三态循环，同 v2） ==================== */
-const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+/* ==================== 主题（三态循环；母版在 meta-panel/assets/kit/theme.js） ==================== */
 function updateThemeBtn(){
   const mode = document.documentElement.dataset.themeMode;
   const eff = document.documentElement.dataset.theme;
@@ -2100,27 +2092,15 @@ function updateThemeBtn(){
   btn.title = mode==='auto' ? '主题：跟随系统（当前'+(eff==='dark'?'暗':'亮')+'）· 点击切亮色'
             : mode==='light' ? '主题：亮色 · 点击切暗色' : '主题：暗色 · 点击恢复跟随系统';
 }
-function applyTheme(mode){
-  const eff = mode==='auto' ? (mq && mq.matches ? 'dark' : 'light') : mode;
-  document.documentElement.dataset.themeMode = mode;
-  document.documentElement.dataset.theme = eff;
-  try{
-    if(mode==='auto') localStorage.removeItem('kb-theme');
-    else localStorage.setItem('kb-theme', mode);
-  }catch(e){}
+KitTheme.onApply(function(){
   updateThemeBtn();
   if(window.mermaid){
-    mermaid.initialize({startOnLoad:false, securityLevel:'loose', theme: eff==='dark'?'dark':'default'});
+    mermaid.initialize({startOnLoad:false, securityLevel:'loose', theme: document.documentElement.dataset.theme==='dark'?'dark':'default'});
     rerenderMermaid();
   }
-}
-function cycleTheme(){
-  const m = document.documentElement.dataset.themeMode;
-  applyTheme(m==='auto' ? 'light' : m==='light' ? 'dark' : 'auto');
-}
-if(mq && mq.addEventListener){
-  mq.addEventListener('change', ()=>{ if(document.documentElement.dataset.themeMode==='auto') applyTheme('auto'); });
-}
+});
+function applyTheme(mode){ KitTheme.apply(mode); }
+function cycleTheme(){ KitTheme.cycle(); }
 
 /* ==================== 库导航显隐（需求 4） ==================== */
 function toggleNav(){
@@ -2178,6 +2158,6 @@ $('#results').innerHTML = emptyHtml('search','搜索你的知识库','左侧点�
 $('#detail').innerHTML = '<div style="padding:14px">'+emptyHtml('panel','点击结果查看详情','支持 Markdown / 图片 / Mermaid / 代码 / LaTeX 渲染。<br><kbd>↑</kbd><kbd>↓</kbd> 切换结果 · <kbd>Enter</kbd> 打开 · <kbd>Esc</kbd> 关闭 · <kbd>[</kbd> 导航显隐')+'</div>';
 loadNav().then(()=>{ updateWsTitle(); loadGenreChips(); });
 </script>
-<script src="assets/app-rail.js"></script>
+<script src="assets/kit/app-rail.js"></script>
 </body>
 </html>
